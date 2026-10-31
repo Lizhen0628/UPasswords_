@@ -7,62 +7,53 @@ const sourcePath = new URL('./UPasswords-macOS-All-UI.sketch', import.meta.url);
 const outputPath = new URL('./UPasswords-macOS-All-UI-Light.sketch', import.meta.url);
 const workingDirectory = await mkdtemp(join(tmpdir(), 'upasswords-light-theme-'));
 
-// Aurora Indigo 暗色 → 浅色映射。键与 redesign-aurora.mjs 产出的暗色值一一对应。
+// Cupertino Native 暗色 → 浅色映射。键与 refine-cupertino.mjs 产出的暗色值一一对应。
 const palette = new Map(Object.entries({
-  // Canvas / window chrome（蓝调深色 → 蓝调浅色）
-  '#08090e': '#e9ebf2',
-  '#0a0c13': '#edf0f6',
-  '#0a0c14': '#f6f7fb',
-  '#0c0e15': '#f1f3f8',
-  '#0d1017': '#eff1f7',
-  '#0d1019': '#eceff6',
-  '#0e1018': '#f2f4f9',
-  '#0e111a': '#f7f8fc',
-  '#10131c': '#f4f6fb',
-  '#12151f': '#f6f7fc',
-  '#12162a': '#eef0f8',
-  '#151926': '#ffffff',
-  '#161b2c': '#e9edf6',
-  '#171b28': '#ffffff',
-  '#181c2a': '#f0f2f8',
-  '#1a1f2e': '#f7f8fb',
-  '#1b2140': '#e6e9f7',
-  '#20263a': '#ffffff',
-  '#252c42': '#e4e8f5',
-  // Borders / hairlines
-  '#242b3d': '#e2e5ef',
-  '#252c3e': '#e2e5ef',
-  '#232a3f': '#e5e8f1',
-  '#283049': '#dfe3ee',
-  '#2c3450': '#d3d8e7',
-  '#2f3854': '#d0d6e5',
-  '#313a56': '#ccd2e2',
-  '#3d4767': '#c9cfdf',
-  '#4f5bd5': '#6366f1', // 选中行描边保持靛蓝
+  // Canvas / window chrome（中性深灰 → Apple 浅色灰阶）
+  '#101012': '#e8e8ed',
+  '#131316': '#efeff3',
+  '#16181f': '#e9ebf1',
+  '#17171b': '#f8f8fa',
+  '#1a1a1e': '#ebebf0',
+  '#1d2029': '#e5e7ee',
+  '#1e1e22': '#f4f4f6',
+  '#1f1f23': '#e6e6eb',
+  '#232327': '#e3e3e8',
+  '#26262b': '#ffffff',
+  '#2a2a2f': '#ffffff',
+  '#2a2a30': '#fafafc',
+  '#2e2e34': '#f6f6f8',
+  '#37373d': '#ffffff',
+  // 选中 / 分隔线 / 边框
+  '#3f3f46': '#e2e2e7',
+  '#3a3a41': '#d9d9de',
+  '#43434a': '#d1d1d6',
+  '#48484f': '#c7c7cc',
+  '#4c4c53': '#bfbfc4',
+  '#515158': '#b2b2b8',
+  '#5c5c63': '#aeaeb3',
   // Text / foreground (inverted)
-  '#f2f5fc': '#1a1f2e',
-  '#e7ecf7': '#272d42',
-  '#d6ddeb': '#3d4457',
-  '#b8c2d8': '#4d5569',
-  '#8f99b3': '#5b6376',
-  '#7e88a3': '#6c7488',
-  '#6b7590': '#8b92a5',
-  '#5a6480': '#9aa2b4',
-  // CTA / 开关 / 头像上的白色文字保持白色（按钮本体为靛蓝渐变，见下）
+  '#f5f5f7': '#1d1d1f',
+  '#ebebf0': '#2c2c30',
+  '#d5d5db': '#3a3a3f',
+  '#aeaeb3': '#55555b',
+  '#9c9ca3': '#6e6e74',
+  '#8e8e95': '#7d7d83',
+  '#7a7a81': '#8e8e94',
+  '#6d6d74': '#9a9aa0',
+  // CTA / 开关 / 头像上的白色文字保持白色（按钮本体为系统蓝渐变，见下）
   '#ffffff': '#ffffff',
-  // Accent / gradient stops / glows → 浅色主题加深一档保证对比度
-  '#818cf8': '#4f46e5',
-  '#8f9bf9': '#5b63e8',
-  '#6366f1': '#4f46e5',
-  '#8b5cf6': '#7c3aed',
-  // Status
-  '#34d399': '#059669',
-  '#fbbf24': '#b45309',
-  '#f87171': '#dc2626',
-  // Label dot pastels → saturated light-theme tones
-  '#7dd3fc': '#0284c7',
-  '#c4b5fd': '#7c3aed',
-  '#fcd34d': '#d97706',
+  // Accent / gradient stops / glows → 浅色主题系统蓝
+  '#409cff': '#2f8fff',
+  '#0a84ff': '#007aff',
+  '#5e5ce6': '#5e5ce6',
+  // Status → Apple 系统色（浅色）
+  '#30d158': '#28cd41',
+  '#ffd60a': '#ffcc00',
+  '#ff453a': '#ff3b30',
+  // Label dot pastels → Apple 系统色（浅色）
+  '#64d2fc': '#32ade6',
+  '#bf5af2': '#af52de',
 }));
 
 function colorHex(color) {

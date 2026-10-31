@@ -79,22 +79,22 @@ const text = (x, y, value, size = 18, color = '#f2f5fc', weight = 400) =>
   `<text x="${x}" y="${y}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="${size}px" font-weight="${weight}" fill="${color}">${esc(value)}</text>`;
 
 function tile(x, y, title, subtitle, rows, footer = '') {
-  let out = `<g transform="translate(${x} ${y})"><rect width="720" height="414" rx="14" fill="#12151f" stroke="#283049"/>`;
-  out += `<rect width="720" height="42" rx="14" fill="#1a1f2e"/><rect x="0" y="28" width="720" height="14" fill="#1a1f2e"/><line x1="0" y1="42" x2="720" y2="42" stroke="#242b3d"/>`;
+  let out = `<g transform="translate(${x} ${y})"><rect width="720" height="414" rx="14" fill="#1e1e22" stroke="#43434a"/>`;
+  out += `<rect width="720" height="42" rx="14" fill="#2a2a30"/><rect x="0" y="28" width="720" height="14" fill="#2a2a30"/><line x1="0" y1="42" x2="720" y2="42" stroke="#3a3a41"/>`;
   out += `<circle cx="19" cy="21" r="5" fill="#ff5f57"/><circle cx="37" cy="21" r="5" fill="#febc2e"/><circle cx="55" cy="21" r="5" fill="#28c840"/>`;
-  out += text(78, 27, title, 16, '#e7ecf7', 700);
-  out += text(34, 83, subtitle, 21, '#f2f5fc', 700);
+  out += text(78, 27, title, 16, '#ebebf0', 600);
+  out += text(34, 83, subtitle, 21, '#f5f5f7', 600);
   const visible = rows.slice(0, 6);
   visible.forEach((row, i) => {
     const [label, value] = row.split('|');
     const yy = 111 + i * 39;
-    out += `<rect x="32" y="${yy}" width="656" height="32" rx="8" fill="${i % 2 ? '#1a1f2e' : '#181c2a'}"/>`;
-    out += text(45, yy + 21, label, 13, '#7e88a3', 500);
-    const color = /开|启用|已同步|有效|很强/.test(value) ? '#34d399' : '#d6ddeb';
+    out += `<rect x="32" y="${yy}" width="656" height="32" rx="8" fill="${i % 2 ? '#2a2a30' : '#26262b'}"/>`;
+    out += text(45, yy + 21, label, 13, '#8e8e95', 500);
+    const color = /开|启用|已同步|有效|很强/.test(value) ? '#30d158' : '#d5d5db';
     out += text(210, yy + 21, value.length > 54 ? `${value.slice(0, 52)}…` : value, 14, color, 400);
   });
   if (footer) {
-    out += `<line x1="32" y1="365" x2="688" y2="365" stroke="#242b3d"/>`;
+    out += `<line x1="32" y1="365" x2="688" y2="365" stroke="#3a3a41"/>`;
     const buttons = footer.split('|');
     let bx = 688;
     for (let i = buttons.length - 1; i >= 0; i--) {
@@ -102,8 +102,8 @@ function tile(x, y, title, subtitle, rows, footer = '') {
       const width = Math.max(74, Math.min(148, label.length * 14 + 30));
       bx -= width;
       const primary = i === buttons.length - 1;
-      out += `<rect x="${bx}" y="378" width="${width}" height="27" rx="8" fill="${primary ? 'url(#whiteBtn)' : '#20263a'}"${primary ? '' : ' stroke="#2f3854"'}/>`;
-      out += text(bx + width / 2, 396, label, 12, primary ? '#ffffff' : '#e7ecf7', 600).replace('<text ', '<text text-anchor="middle" ');
+      out += `<rect x="${bx}" y="378" width="${width}" height="27" rx="8" fill="${primary ? 'url(#whiteBtn)' : '#37373d'}"${primary ? '' : ' stroke="#4c4c53"'}/>`;
+      out += text(bx + width / 2, 396, label, 12, primary ? '#ffffff' : '#ebebf0', 600).replace('<text ', '<text text-anchor="middle" ');
       bx -= 9;
     }
   }
@@ -111,8 +111,8 @@ function tile(x, y, title, subtitle, rows, footer = '') {
 }
 
 function section(title, subtitle, items, startY, columns = 4, rowsOnly = false) {
-  let out = `<g><text x="120" y="${startY}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="30px" font-weight="700" fill="#f2f5fc">${esc(title)}</text>`;
-  out += `<text x="120" y="${startY + 28}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="15px" fill="#7e88a3">${esc(subtitle)}</text>`;
+  let out = `<g><text x="120" y="${startY}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="30px" font-weight="700" fill="#f5f5f7">${esc(title)}</text>`;
+  out += `<text x="120" y="${startY + 28}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="15px" fill="#8e8e95">${esc(subtitle)}</text>`;
   const top = startY + 54;
   const gapX = 36;
   const gapY = 28;

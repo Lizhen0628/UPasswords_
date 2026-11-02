@@ -79,22 +79,27 @@ const text = (x, y, value, size = 18, color = '#f2f5fc', weight = 400) =>
   `<text x="${x}" y="${y}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="${size}px" font-weight="${weight}" fill="${color}">${esc(value)}</text>`;
 
 function tile(x, y, title, subtitle, rows, footer = '') {
-  let out = `<g transform="translate(${x} ${y})"><rect width="720" height="414" rx="14" fill="#1e1e22" stroke="#43434a"/>`;
-  out += `<rect width="720" height="42" rx="14" fill="#2a2a30"/><rect x="0" y="28" width="720" height="14" fill="#2a2a30"/><line x1="0" y1="42" x2="720" y2="42" stroke="#3a3a41"/>`;
+  let out = `<g transform="translate(${x} ${y})"><rect width="720" height="414" rx="14" fill="#1e1e22" fill-opacity=".6" stroke="#43434a" stroke-opacity=".75"/>`;
+  out += '<rect x="1" y="1" width="718" height="412" rx="13" fill="none" stroke="url(#glassRim)"/>';
+  out += `<rect width="720" height="42" rx="14" fill="#2a2a30" fill-opacity=".55"/><rect x="0" y="28" width="720" height="14" fill="#2a2a30" fill-opacity=".55"/><line x1="0" y1="42" x2="720" y2="42" stroke="#3a3a41" stroke-opacity=".6"/>`;
   out += `<circle cx="19" cy="21" r="5" fill="#ff5f57"/><circle cx="37" cy="21" r="5" fill="#febc2e"/><circle cx="55" cy="21" r="5" fill="#28c840"/>`;
   out += text(78, 27, title, 16, '#ebebf0', 600);
   out += text(34, 83, subtitle, 21, '#f5f5f7', 600);
+  // 字段行：label 为无底色弱化文本（键），value 为内凹玻璃字段框（值组件），
+  // 与主窗口「编辑卡片」的标签/输入框视觉语言一致，键值层级一眼可辨。
   const visible = rows.slice(0, 6);
   visible.forEach((row, i) => {
     const [label, value] = row.split('|');
     const yy = 111 + i * 39;
-    out += `<rect x="32" y="${yy}" width="656" height="32" rx="8" fill="${i % 2 ? '#2a2a30' : '#26262b'}"/>`;
     out += text(45, yy + 21, label, 13, '#8e8e95', 500);
-    const color = /开|启用|已同步|有效|很强/.test(value) ? '#30d158' : '#d5d5db';
-    out += text(210, yy + 21, value.length > 54 ? `${value.slice(0, 52)}…` : value, 14, color, 400);
+    out += `<rect x="204" y="${yy + 2}" width="484" height="28" rx="7" fill="#17171b" fill-opacity=".5" stroke="#48484f" stroke-opacity=".8"/>`;
+    // 正向状态值标绿：精确匹配 开/开启，避免误伤「打开编辑器」等动作文案
+    const positive = value === '开' || value === '开启' || /启用|已同步|有效|很强|已连接/.test(value);
+    const color = positive ? '#30d158' : '#d5d5db';
+    out += text(216, yy + 21, value.length > 32 ? `${value.slice(0, 30)}…` : value, 14, color, 400);
   });
   if (footer) {
-    out += `<line x1="32" y1="365" x2="688" y2="365" stroke="#3a3a41"/>`;
+    out += `<line x1="32" y1="365" x2="688" y2="365" stroke="#3a3a41" stroke-opacity=".6"/>`;
     const buttons = footer.split('|');
     let bx = 688;
     for (let i = buttons.length - 1; i >= 0; i--) {
@@ -102,7 +107,7 @@ function tile(x, y, title, subtitle, rows, footer = '') {
       const width = Math.max(74, Math.min(148, label.length * 14 + 30));
       bx -= width;
       const primary = i === buttons.length - 1;
-      out += `<rect x="${bx}" y="378" width="${width}" height="27" rx="8" fill="${primary ? 'url(#whiteBtn)' : '#37373d'}"${primary ? '' : ' stroke="#4c4c53"'}/>`;
+      out += `<rect x="${bx}" y="378" width="${width}" height="27" rx="8" fill="${primary ? 'url(#whiteBtn)' : '#37373d'}"${primary ? '' : ' fill-opacity=".6" stroke="#4c4c53" stroke-opacity=".8"'}/>`;
       out += text(bx + width / 2, 396, label, 12, primary ? '#ffffff' : '#ebebf0', 600).replace('<text ', '<text text-anchor="middle" ');
       bx -= 9;
     }

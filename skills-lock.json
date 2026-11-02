@@ -349,6 +349,12 @@
       "skillPath": "skills/shareplay-activities/SKILL.md",
       "computedHash": "44b088ff8ee83977052b214d58d2a4586b9630a14b67bfcf19063e38ff861a53"
     },
+    "sketch-expert": {
+      "source": "nobodyonlyc/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sketch-expert/SKILL.md",
+      "computedHash": "a9fd313d733d641156f4067642dd5e67c9ea614f78566869b8a5b7fc625faf62"
+    },
     "speech-recognition": {
       "source": "dpearson2699/swift-ios-skills",
       "sourceType": "github",

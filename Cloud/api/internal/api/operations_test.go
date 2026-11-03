@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"mime/multipart"
 	"net/mail"
 	"strings"
 	"testing"
@@ -39,7 +40,10 @@ func TestEmailValidationAndReplyRouting(t *testing.T) {
 		SMTPVerifyReplyTo:   "verify@upasswords.com",
 	}
 	for _, p := range []string{"register", "login", "sensitive"} {
-		msg := verificationMessage(c, "user@example.com", "123456", p, false)
+		msg, err := verificationMessage(c, "user@example.com", "123456", p, false)
+		if err != nil {
+			t.Fatal(err)
+		}
 		want := c.SMTPVerifyReplyTo
 		wantFrom := c.SMTPVerifyFrom
 		if p == "register" {
@@ -64,7 +68,11 @@ func TestMaintenanceSchedule(t *testing.T) {
 func TestVerificationMailLanguageAndPurpose(t *testing.T) {
 	for _, zh := range []bool{false, true} {
 		for _, purpose := range []string{"register", "login", "sensitive"} {
-			message, err := mail.ReadMessage(strings.NewReader(verificationMessage(Config{SMTPFrom: "sender@example.com"}, "user@example.com", "123456", purpose, zh)))
+			rawMessage, err := verificationMessage(Config{SMTPFrom: "sender@example.com"}, "user@example.com", "123456", purpose, zh)
+			if err != nil {
+				t.Fatal(err)
+			}
+			message, err := mail.ReadMessage(strings.NewReader(rawMessage))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,29 +80,116 @@ func TestVerificationMailLanguageAndPurpose(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantSubject := "UPasswords sign-in code"
-			if purpose == "sensitive" {
-				wantSubject = "UPasswords security code"
+			wantSubject := "Your UPasswords sign-in code"
+			if purpose == "register" {
+				wantSubject = "Verify your UPasswords account"
+			} else if purpose == "sensitive" {
+				wantSubject = "Confirm a UPasswords security action"
 			}
 			if zh {
-				wantSubject = "UPasswords 登录验证码"
-				if purpose == "sensitive" {
-					wantSubject = "UPasswords 安全操作验证码"
+				wantSubject = "你的 UPasswords 登录验证码"
+				if purpose == "register" {
+					wantSubject = "验证你的 UPasswords 账户"
+				} else if purpose == "sensitive" {
+					wantSubject = "确认 UPasswords 安全操作"
 				}
 			}
-			raw, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, message.Body))
+			mediaType, params, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantExpiry := "10 minutes"
-			if zh {
-				wantExpiry = "10 分钟"
+			if mediaType != "multipart/alternative" {
+				t.Fatalf("unexpected content type: %s", mediaType)
 			}
-			if subject != wantSubject || !strings.Contains(string(raw), "123456") || !strings.Contains(string(raw), wantExpiry) || message.Header.Get("Content-Type") != "text/plain; charset=UTF-8" {
+			parts := multipart.NewReader(message.Body, params["boundary"])
+			contents := make(map[string]string)
+			for {
+				part, err := parts.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				partType, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if part.Header.Get("Content-Transfer-Encoding") != "base64" {
+					t.Fatalf("unexpected transfer encoding: %s", part.Header.Get("Content-Transfer-Encoding"))
+				}
+				body, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, part))
+				if err != nil {
+					t.Fatal(err)
+				}
+				contents[partType] = string(body)
+			}
+			plain := contents["text/plain"]
+			html := contents["text/html"]
+			wantExpiry := "10 minutes"
+			wantHeading := "Sign in to UPasswords"
+			if purpose == "register" {
+				wantHeading = "Verify your email address"
+			} else if purpose == "sensitive" {
+				wantHeading = "Confirm this security action"
+			}
+			if zh {
+				wantExpiry = "10 分钟后失效"
+				wantHeading = "登录 UPasswords"
+				if purpose == "register" {
+					wantHeading = "验证你的邮箱"
+				} else if purpose == "sensitive" {
+					wantHeading = "确认安全操作"
+				}
+			}
+			if subject != wantSubject || !strings.Contains(plain, "123456") || !strings.Contains(plain, wantExpiry) ||
+				!strings.Contains(html, "123456") || !strings.Contains(html, wantExpiry) || !strings.Contains(html, wantHeading) ||
+				!strings.Contains(html, "contact@upasswords.com") {
 				t.Fatalf("mail content mismatch for zh=%v purpose=%s: %q", zh, purpose, subject)
 			}
 		}
 	}
+}
+
+func TestVerificationMailEscapesHTMLCode(t *testing.T) {
+	rawMessage, err := verificationMessage(Config{SMTPFrom: "sender@example.com"}, "user@example.com", "<script>alert(1)</script>", "login", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := mail.ReadMessage(strings.NewReader(rawMessage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := multipart.NewReader(message.Body, params["boundary"])
+	for {
+		part, err := parts.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		partType, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if partType != "text/html" {
+			continue
+		}
+		body, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, part))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "<script>alert(1)</script>") || !strings.Contains(string(body), "&lt;script&gt;alert(1)&lt;/script&gt;") {
+			t.Fatal("HTML body did not escape dynamic code")
+		}
+		return
+	}
+	t.Fatal("HTML alternative is missing")
 }
 
 func TestCanonicalVersionedRoutes(t *testing.T) {

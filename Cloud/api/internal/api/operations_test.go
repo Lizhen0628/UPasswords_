@@ -31,14 +31,22 @@ func TestEmailValidationAndReplyRouting(t *testing.T) {
 			t.Error("invalid email accepted")
 		}
 	}
-	c := Config{SMTPFrom: "sender@163.com", SMTPRegisterReplyTo: "register@upasswords.com", SMTPVerifyReplyTo: "verify@upasswords.com"}
+	c := Config{
+		SMTPFrom:            "fallback@upasswords.com",
+		SMTPRegisterFrom:    "register@upasswords.com",
+		SMTPVerifyFrom:      "verify@upasswords.com",
+		SMTPRegisterReplyTo: "register@upasswords.com",
+		SMTPVerifyReplyTo:   "verify@upasswords.com",
+	}
 	for _, p := range []string{"register", "login", "sensitive"} {
 		msg := verificationMessage(c, "user@example.com", "123456", p, false)
 		want := c.SMTPVerifyReplyTo
+		wantFrom := c.SMTPVerifyFrom
 		if p == "register" {
 			want = c.SMTPRegisterReplyTo
+			wantFrom = c.SMTPRegisterFrom
 		}
-		if !strings.Contains(msg, "Reply-To: "+want) || !strings.Contains(msg, "From: sender@163.com") {
+		if !strings.Contains(msg, "Reply-To: "+want) || !strings.Contains(msg, "From: "+wantFrom) || mailFrom(c, p) != wantFrom {
 			t.Error("incorrect sender or reply address")
 		}
 	}

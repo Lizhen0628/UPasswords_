@@ -50,6 +50,7 @@ type Config struct {
 	AdminToken                                                        string
 	R2Endpoint, R2Bucket, R2AccessKey, R2SecretKey                    string
 	SMTPHost, SMTPPort, SMTPFrom, SMTPReplyTo, SMTPUser, SMTPPassword string
+	SMTPRegisterFrom, SMTPVerifyFrom                                  string
 	SMTPRegisterReplyTo, SMTPVerifyReplyTo                            string
 	TrustedProxy                                                      string
 	Limits                                                            map[string]int64
@@ -57,9 +58,11 @@ type Config struct {
 
 // LoadConfig fails closed on missing credentials or ambiguous TLS settings.
 func LoadConfig() (Config, error) {
-	c := Config{Address: env("HTTP_ADDR", ":8080"), DBAddress: env("DB_ADDRESS", "10.0.3.198:6033"), DBName: env("DB_NAME", "upasswords"), DBUser: os.Getenv("DB_USER"), DBPassword: os.Getenv("DB_PASSWORD"), DBTLS: env("DB_TLS", "verify"), DBCA: os.Getenv("DB_CA_FILE"), AdminToken: os.Getenv("ADMIN_TOKEN"), R2Endpoint: os.Getenv("R2_ENDPOINT"), R2Bucket: env("R2_BUCKET", "upasswords"), R2AccessKey: os.Getenv("R2_ACCESS_KEY_ID"), R2SecretKey: os.Getenv("R2_SECRET_ACCESS_KEY"), SMTPHost: env("SMTP_HOST", "smtp.163.com"), SMTPPort: env("SMTP_PORT", "465"), SMTPFrom: os.Getenv("SMTP_FROM"), SMTPReplyTo: env("SMTP_REPLY_TO", "register@upasswords.com"), SMTPUser: os.Getenv("SMTP_USER"), SMTPPassword: os.Getenv("SMTP_PASSWORD"), TrustedProxy: os.Getenv("TRUSTED_PROXY_IP"), Limits: map[string]int64{}}
+	c := Config{Address: env("HTTP_ADDR", ":8080"), DBAddress: env("DB_ADDRESS", "10.0.3.198:6033"), DBName: env("DB_NAME", "upasswords"), DBUser: os.Getenv("DB_USER"), DBPassword: os.Getenv("DB_PASSWORD"), DBTLS: env("DB_TLS", "verify"), DBCA: os.Getenv("DB_CA_FILE"), AdminToken: os.Getenv("ADMIN_TOKEN"), R2Endpoint: os.Getenv("R2_ENDPOINT"), R2Bucket: env("R2_BUCKET", "upasswords"), R2AccessKey: os.Getenv("R2_ACCESS_KEY_ID"), R2SecretKey: os.Getenv("R2_SECRET_ACCESS_KEY"), SMTPHost: env("SMTP_HOST", "smtp.resend.com"), SMTPPort: env("SMTP_PORT", "465"), SMTPFrom: os.Getenv("SMTP_FROM"), SMTPReplyTo: env("SMTP_REPLY_TO", "register@upasswords.com"), SMTPUser: env("SMTP_USER", "resend"), SMTPPassword: os.Getenv("SMTP_PASSWORD"), TrustedProxy: os.Getenv("TRUSTED_PROXY_IP"), Limits: map[string]int64{}}
 	c.SMTPRegisterReplyTo = env("SMTP_REGISTER_REPLY_TO", "register@upasswords.com")
 	c.SMTPVerifyReplyTo = env("SMTP_VERIFY_REPLY_TO", "verify@upasswords.com")
+	c.SMTPRegisterFrom = env("SMTP_REGISTER_FROM", c.SMTPFrom)
+	c.SMTPVerifyFrom = env("SMTP_VERIFY_FROM", c.SMTPFrom)
 	u, err := url.Parse(c.R2Endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 		return c, errors.New("R2_ENDPOINT must be an HTTPS URL")
@@ -69,7 +72,7 @@ func LoadConfig() (Config, error) {
 	if e != nil || len(c.KEK) != 32 {
 		return c, errors.New("APP_KEK must contain 64 hex characters")
 	}
-	if c.DBUser == "" || c.DBPassword == "" || c.AdminToken == "" || c.R2Endpoint == "" || c.R2AccessKey == "" || c.R2SecretKey == "" || c.SMTPUser == "" || c.SMTPPassword == "" || c.SMTPFrom == "" {
+	if c.DBUser == "" || c.DBPassword == "" || c.AdminToken == "" || c.R2Endpoint == "" || c.R2AccessKey == "" || c.R2SecretKey == "" || c.SMTPUser == "" || c.SMTPPassword == "" || c.SMTPRegisterFrom == "" || c.SMTPVerifyFrom == "" {
 		return c, errors.New("missing database, object storage, admin or SMTP credentials")
 	}
 	if c.DBTLS != "verify" && c.DBTLS != "pinned" {

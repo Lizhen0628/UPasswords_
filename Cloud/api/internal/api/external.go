@@ -151,7 +151,7 @@ func (m SMTPMailer) Send(ctx context.Context, to, code, purpose string, zh bool)
 	if e = client.Auth(smtp.PlainAuth("", c.SMTPUser, c.SMTPPassword, c.SMTPHost)); e != nil {
 		return e
 	}
-	if e = client.Mail(c.SMTPFrom); e != nil {
+	if e = client.Mail(mailFrom(c, purpose)); e != nil {
 		return e
 	}
 	if e = client.Rcpt(to); e != nil {
@@ -170,7 +170,7 @@ func (m SMTPMailer) Send(ctx context.Context, to, code, purpose string, zh bool)
 	return client.Quit()
 }
 
-// verificationMessage assembles the localized verification email with the configured sender and reply address.
+// verificationMessage assembles the localized email with purpose-specific sender and reply addresses.
 func verificationMessage(c Config, to, code, purpose string, zh bool) string {
 	subject := "UPasswords sign-in code"
 	text := "Your UPasswords verification code: " + code + "\nThis code expires in 10 minutes.\nIf you did not request it, please ignore this email."
@@ -186,7 +186,18 @@ func verificationMessage(c Config, to, code, purpose string, zh bool) string {
 	}
 	// All dynamic addresses come from strict validation/config; forbid header injection as a second boundary.
 	clean := func(v string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(v) }
-	return fmt.Sprintf("From: %s\r\nReply-To: %s\r\nTo: %s\r\nSubject: =?UTF-8?B?%s?=\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", clean(c.SMTPFrom), clean(mailReplyTo(c, purpose)), clean(to), base64.StdEncoding.EncodeToString([]byte(subject)), time.Now().Format(time.RFC1123Z), base64.StdEncoding.EncodeToString([]byte(text)))
+	return fmt.Sprintf("From: %s\r\nReply-To: %s\r\nTo: %s\r\nSubject: =?UTF-8?B?%s?=\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", clean(mailFrom(c, purpose)), clean(mailReplyTo(c, purpose)), clean(to), base64.StdEncoding.EncodeToString([]byte(subject)), time.Now().Format(time.RFC1123Z), base64.StdEncoding.EncodeToString([]byte(text)))
+}
+
+// mailFrom routes registration mail and other verification mail from their configured addresses.
+func mailFrom(c Config, purpose string) string {
+	if purpose == "register" && c.SMTPRegisterFrom != "" {
+		return c.SMTPRegisterFrom
+	}
+	if purpose != "register" && c.SMTPVerifyFrom != "" {
+		return c.SMTPVerifyFrom
+	}
+	return c.SMTPFrom
 }
 
 // mailReplyTo routes replies by registration or verification purpose.

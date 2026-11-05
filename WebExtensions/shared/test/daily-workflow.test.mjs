@@ -118,6 +118,26 @@ test("created login preserves multiple website associations and their match mode
     assert.equal(itemMatchesPage("https://login.example.org/sign-in", projected), true);
     assert.equal(itemMatchesPage("https://example.com/other", projected), false);
 });
+
+test("created login persists regex and never site-match rules", () => {
+    const xml = createLoginItemXml({
+        id: uuid,
+        title: "Rule modes",
+        username: "u",
+        password: "p",
+        url: "^https://login\\.example\\.com/.*$",
+        siteMatch: "regex",
+        sites: [{ url: "https://example.org", mode: "never" }],
+        notes: "",
+    }, 123);
+    const projected = projectVaultFragment({ uuid, xml, kind: 1, revision: 1, modifiedMs: 123 });
+    assert.deepEqual(projected?.sites, [
+        { url: "^https://login\\.example\\.com/.*$", mode: "regex" },
+        { url: "https://example.org/", mode: "never" },
+    ]);
+    assert.equal(itemMatchesPage("https://login.example.com/", projected), true);
+})
+
 test("favorite metadata is projected only for favorited cards", () => {
     const favorite = parseVaultXml(`<passworddatabase><card id="${uuid}" favorite="true"/></passworddatabase>`)[0];
     const ordinary = parseVaultXml(`<passworddatabase><card id="${uuid}"/></passworddatabase>`)[0];

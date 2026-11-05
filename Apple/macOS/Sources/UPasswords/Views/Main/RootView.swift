@@ -51,9 +51,11 @@ struct MainWindowView: View {
             }
             VStack(spacing: 0) {
                 MainToolbarView()
+                    .environmentObject(ctx.searchState.results)
                 HairlineDivider(horizontal: true)
                 HStack(spacing: 0) {
                     CardListView()
+                        .environmentObject(ctx.searchState.results)
                         .frame(width: 266)
                     HairlineDivider()
                     CardDetailView()

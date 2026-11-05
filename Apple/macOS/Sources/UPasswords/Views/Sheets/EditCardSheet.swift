@@ -446,6 +446,7 @@ struct FieldEditorSheet: View {
     @State private var name = ""
     @State private var type: FieldType = .text
     @State private var autofill: Autofill = .off
+    @State private var siteMatch: SiteMatchMode = .domain
 
     var body: some View {
         SheetShell(
@@ -454,6 +455,7 @@ struct FieldEditorSheet: View {
             onAppearBody: {
                 type = state.field.type
                 autofill = state.field.autofill
+                siteMatch = state.field.siteMatch
                 // 新建字段:名称默认与类型名相同(用户可改)
                 name = state.field.name.isEmpty ? type.localizedName : state.field.name
             },
@@ -464,6 +466,7 @@ struct FieldEditorSheet: View {
                 f.name = name
                 f.type = type
                 f.autofill = autofill
+                f.siteMatch = siteMatch
                 onSave(f)
                 dismiss()
             },
@@ -491,6 +494,16 @@ struct FieldEditorSheet: View {
                             ForEach(Autofill.allCases) { a in
                                 Text(a.localizedName).tag(a)
                             }
+                        }
+                    }
+                    if type == .website {
+                        LabeledRow(label: L10n.t("site_match_label")) {
+                            Picker("", selection: $siteMatch) {
+                                ForEach(SiteMatchMode.allCases) { mode in
+                                    Text(mode.localizedName).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
                         }
                     }
                 }
@@ -589,6 +602,10 @@ private struct FieldEditRow: View {
             .buttonStyle(PanelButtonStyle(padding: 0))
             .disabled(valueDraft.isEmpty)
             .help(L10n.t("copy_command"))
+
+            if field.type == .website {
+                siteMatchMenu
+            }
 
             moreMenu
         }
@@ -748,6 +765,35 @@ private struct FieldEditRow: View {
         valueDraft = value
         Log.info("ui", "otp filled from qr value.len=\(value.count)")
         AppToast.shared.show(L10n.t("qr_filled", fallback: "已从二维码填入一次性代码"))
+    }
+
+    private var siteMatchMenu: some View {
+        Menu {
+            ForEach(SiteMatchMode.allCases) { mode in
+                Button {
+                    guard field.siteMatch != mode else { return }
+                    field.siteMatch = mode
+                    Log.info("ui", "site match updated fieldId=\(field.id) mode=\(mode.rawValue)")
+                } label: {
+                    if field.siteMatch == mode {
+                        Label(mode.localizedName, systemImage: "checkmark")
+                    } else {
+                        Text(mode.localizedName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(L10n.t("site_match_label") + ": " + field.siteMatch.localizedName)
     }
 
     private var moreMenu: some View {

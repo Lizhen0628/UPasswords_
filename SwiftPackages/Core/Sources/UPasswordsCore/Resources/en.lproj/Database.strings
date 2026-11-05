@@ -117,6 +117,7 @@
 "weak_passwords_label" = "Weak passwords";
 "web_account_template" = "Web account";
 "web_accounts_label" = "Web accounts";
+"website_field_label" = "Website";
 "website_type" = "Website";
 "wifi_password_field" = "Wi-Fi password";
 "wifi_router_template" = "Wi-Fi router";

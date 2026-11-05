@@ -448,7 +448,9 @@ extension AppContext {
             syncRemoteUnreadable = true
             return
         }
-        PasswordStore.removePassword(databaseName: databaseName)
+        PasswordStore.removePassword(
+            databaseName: databaseName,
+            sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
         Log.warn("sync", "remote password change — force locking \"\(databaseName)\" for new password")
         lock()
         AppToast.shared.show(L10n.t("relay_force_lock_message"))

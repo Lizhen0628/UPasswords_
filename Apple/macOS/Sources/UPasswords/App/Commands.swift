@@ -114,12 +114,6 @@ struct UPasswordsCommands: Commands {
             Button(L10n.t("help_command")) { perform { AppContext.shared.activeSheet = .whatsNew } }
         }
 
-        CommandGroup(after: .appInfo) {
-            Button(L10n.t("whats_new_title")) { perform { AppContext.shared.activeSheet = .whatsNew } }
-            Divider()
-            Button(L10n.t("premium_command")) { perform { AppContext.shared.activeSheet = .premium } }
-        }
-
         // contextual delete-key behavior for the card list
         CommandGroup(after: .pasteboard) {
             Button(L10n.t("delete_card_query")) {
@@ -142,14 +136,6 @@ struct UPasswordsCommands: Commands {
                 }
             }
             .keyboardShortcut("d", modifiers: .command)
-
-            Button(L10n.t("edit_button")) {
-                perform {
-                    let ctx = AppContext.shared
-                    if let c = ctx.selectedCard { ctx.editDraft = EditCardModel(card: c) }
-                }
-            }
-            .keyboardShortcut("e", modifiers: .command)
         }
     }
 }

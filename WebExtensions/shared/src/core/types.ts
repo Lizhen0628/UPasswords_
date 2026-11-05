@@ -42,7 +42,7 @@ export type ExtensionAutofill =
     | "cc-exp"
     | "cc-csc";
 
-export type SiteMatchMode = "domain" | "wildcard" | "exactURL";
+export type SiteMatchMode = "domain" | "host" | "startsWith" | "exactURL" | "regex" | "never" | "wildcard";
 
 /** A website association stored on a website field in the encrypted card XML. */
 export interface SiteAssociation {
@@ -58,7 +58,7 @@ export interface ExtensionField {
     type: ExtensionFieldType;
     value: string;
     autofill: ExtensionAutofill;
-    /** Present only on website fields; absent legacy values use domain matching. */
+    /** Website match rule; absent legacy values use base-domain matching. */
     siteMatch?: SiteMatchMode;
 }
 

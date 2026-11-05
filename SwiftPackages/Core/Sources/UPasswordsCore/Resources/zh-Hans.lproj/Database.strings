@@ -117,6 +117,7 @@
 "weak_passwords_label" = "弱密码";
 "web_account_template" = "互联网帐户";
 "web_accounts_label" = "网络账号";
+"website_field_label" = "网站";
 "website_type" = "网址";
 "wifi_password_field" = "Wi-Fi 密码";
 "wifi_router_template" = "Wi-Fi 路由器";

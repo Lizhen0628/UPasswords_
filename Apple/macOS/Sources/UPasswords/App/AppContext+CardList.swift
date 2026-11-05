@@ -27,6 +27,8 @@ extension AppContext {
         ids.insert(cardId, at: 0)
         if ids.count > Self.recentLimit { ids.removeLast(ids.count - Self.recentLimit) }
         UserDefaults.standard.set(ids.map(\.uuidString), forKey: Self.recentKey)
+        recentRevision &+= 1
+        updateRecentSidebarCount()
         Log.info("ui", "pushRecent cardId=\(cardId) total=\(ids.count)")
         objectWillChange.send()
     }
@@ -34,6 +36,8 @@ extension AppContext {
     func clearRecent() {
         Log.info("ui", "clearRecent (had \(recentIds.count))")
         UserDefaults.standard.removeObject(forKey: Self.recentKey)
+        recentRevision &+= 1
+        updateRecentSidebarCount()
         objectWillChange.send()
     }
 
@@ -41,8 +45,25 @@ extension AppContext {
 
     /// The card list for the current sidebar selection + search.
     func cards(for selection: SidebarSelection, search: String) -> [Card] {
-        settings.sortingValue.sort(filteredCards(for: selection, search: search),
-                                   favoritesFirst: settings.favoritesAtTop)
+        let filterKey = cardFilterCacheKey(for: selection, search: search)
+        let filteredIDs = filteredCardIDs(for: filterKey)
+        let sortKey = CardSortCacheKey(
+            filter: filterKey,
+            sorting: settings.sorting,
+            favoritesFirst: settings.favoritesAtTop
+        )
+        if sortedCardIDsCacheKey != sortKey {
+            let filteredCards = filteredIDs.compactMap { id in
+                cardIndexByID[id].map { database.cards[$0] }
+            }
+            sortedCardIDsCache = settings.sortingValue
+                .sort(filteredCards, favoritesFirst: settings.favoritesAtTop)
+                .map(\.id)
+            sortedCardIDsCacheKey = sortKey
+        }
+        return sortedCardIDsCache.compactMap { id in
+            cardIndexByID[id].map { database.cards[$0] }
+        }
     }
 
     /// 过滤但未排序的列表。计数场景(侧栏角标)不必付出排序开销。
@@ -60,6 +81,33 @@ extension AppContext {
             cards = cards.filter { satisfiesSearch($0, words: searchWords) }
         }
         return cards
+    }
+
+    private func cardFilterCacheKey(
+        for selection: SidebarSelection,
+        search: String
+    ) -> CardFilterCacheKey {
+        let selectionUsesRecentOrder: Bool
+        if case .special(.recent) = selection {
+            selectionUsesRecentOrder = true
+        } else {
+            selectionUsesRecentOrder = false
+        }
+        return CardFilterCacheKey(
+            databaseRevision: databaseRevision,
+            recentRevision: selectionUsesRecentOrder ? recentRevision : 0,
+            selection: selection,
+            search: search,
+            searchByLabels: settings.searchByLabels,
+            searchPasswords: settings.searchPasswords
+        )
+    }
+
+    private func filteredCardIDs(for key: CardFilterCacheKey) -> [UUID] {
+        guard filteredCardIDsCacheKey != key else { return filteredCardIDsCache }
+        filteredCardIDsCache = filteredCards(for: key.selection, search: key.search).map(\.id)
+        filteredCardIDsCacheKey = key
+        return filteredCardIDsCache
     }
 
     private func strategyCards(for sp: SpecialLabel) -> [Card] {
@@ -89,9 +137,7 @@ extension AppContext {
         case .weakPasswords:
             return active.filter { !$0.archived && $0.hasWeakPasswords }
         case .samePasswords:
-            let groups = SamePasswordsService.groups(cards: active)
-            let ids = Set(groups.values.flatMap { $0 })
-            return active.filter { ids.contains($0.id) }
+            return active.filter { reusedPasswordCardIDs.contains($0.id) }
         case .compromised:
             return active.filter { !$0.archived && $0.compromised }
         case .expiring:
@@ -107,14 +153,114 @@ extension AppContext {
         }
     }
 
-    /// Sidebar badge counts (show_card_count_setting)。只过滤不排序。
-    func count(for selection: SidebarSelection) -> Int {
-        count(for: selection, search: "")
+    /// Sidebar badge count snapshot, refreshed once per database change or calendar day.
+    func sidebarCount(for selection: SidebarSelection) -> Int {
+        let now = Date()
+        guard sidebarCountsAreCurrent,
+              Calendar.current.isDate(sidebarCountsCalculatedAt, inSameDayAs: now) else {
+            refreshSidebarCounts(now: now)
+            return sidebarCardCounts[selection] ?? 0
+        }
+        return sidebarCardCounts[selection] ?? 0
     }
 
     /// 计数场景(工具栏副标题):当前选择 + 搜索词,只过滤不排序。
     func count(for selection: SidebarSelection, search: String) -> Int {
-        filteredCards(for: selection, search: search).count
+        filteredCardIDs(for: cardFilterCacheKey(for: selection, search: search)).count
+    }
+
+    private func refreshSidebarCounts(now: Date) {
+        var counts: [SidebarSelection: Int] = [:]
+        var activeCardIDs = Set<UUID>()
+
+        for card in database.cards {
+            if card.template {
+                counts[.special(.templates), default: 0] += 1
+            }
+            if card.trashed {
+                counts[.special(.trash), default: 0] += 1
+                continue
+            }
+            guard !card.template else { continue }
+
+            activeCardIDs.insert(card.id)
+            if reusedPasswordCardIDs.contains(card.id) {
+                counts[.special(.samePasswords), default: 0] += 1
+            }
+            if card.archived {
+                counts[.special(.archived), default: 0] += 1
+                continue
+            }
+
+            counts[.special(.allCards), default: 0] += 1
+            if card.favorite {
+                counts[.special(.favorites), default: 0] += 1
+            }
+            if card.hasWeakPasswords {
+                counts[.special(.weakPasswords), default: 0] += 1
+            }
+            if card.compromised {
+                counts[.special(.compromised), default: 0] += 1
+            }
+            if card.isExpiring {
+                counts[.special(.expiring), default: 0] += 1
+            }
+            if card.isExpired {
+                counts[.special(.expired), default: 0] += 1
+            }
+            if card.symbol == "credit_card" {
+                counts[.special(.creditCards), default: 0] += 1
+            }
+            if card.hasFiles {
+                counts[.special(.files), default: 0] += 1
+            }
+            if card.hasImages {
+                counts[.special(.images), default: 0] += 1
+            }
+
+            var hasPassword = false
+            var hasOneTimePassword = false
+            var hasOnlyNotes = card.hasNotes
+            for field in card.fields {
+                if field.type == .password {
+                    hasPassword = true
+                    hasOnlyNotes = false
+                }
+                if field.type == .oneTimePassword {
+                    hasOneTimePassword = true
+                }
+                if field.type.isLogin {
+                    hasOnlyNotes = false
+                }
+            }
+            if hasPassword {
+                counts[.special(.passwords), default: 0] += 1
+            }
+            if hasOneTimePassword {
+                counts[.special(.oneTimeCodes), default: 0] += 1
+            }
+            if hasOnlyNotes {
+                counts[.special(.notes), default: 0] += 1
+            }
+            for labelID in Set(card.labelIds) {
+                counts[.label(labelID), default: 0] += 1
+            }
+        }
+
+        counts[.special(.recent)] = recentIds.filter(activeCardIDs.contains).count
+        sidebarCardCounts = counts
+        sidebarActiveCardIDs = activeCardIDs
+        sidebarCountsCalculatedAt = now
+        sidebarCountsAreCurrent = true
+    }
+
+    private func updateRecentSidebarCount() {
+        guard sidebarCountsAreCurrent,
+              Calendar.current.isDate(sidebarCountsCalculatedAt, inSameDayAs: Date()) else {
+            sidebarCountsAreCurrent = false
+            return
+        }
+        sidebarCardCounts[.special(.recent)] = recentIds.filter(sidebarActiveCardIDs.contains).count
     }
 
     // MARK: - Search (XCard.satisfiesToSearchWords / previewForSearchWords)
@@ -126,24 +272,28 @@ extension AppContext {
     }
 
     private func containsWord(_ card: Card, word: String) -> Bool {
-        if card.title.lowercased().contains(word) { return true }
-        if card.notes.lowercased().contains(word) { return true }
+        if matchesSearchTerm(word, in: card.title) { return true }
+        if matchesSearchTerm(word, in: card.notes) { return true }
         for f in card.fields {
-            if f.name.lowercased().contains(word) { return true }
+            if matchesSearchTerm(word, in: f.name) { return true }
             if f.type.isSearchable {
                 if !f.type.isHidden || settings.searchPasswords {
-                    if f.value.lowercased().contains(word) { return true }
-                } else if f.value.lowercased().contains(word) {
+                    if matchesSearchTerm(word, in: f.value) { return true }
+                } else if matchesSearchTerm(word, in: f.value) {
                     return true // hidden fields match on value but not shown in preview
                 }
             }
         }
         if settings.searchByLabels {
             for lid in card.labelIds {
-                if let l = database.label(id: lid), l.name.lowercased().contains(word) { return true }
+                if let label = database.label(id: lid), matchesSearchTerm(word, in: label.name) { return true }
             }
         }
         return false
+    }
+
+    private func matchesSearchTerm(_ word: String, in text: String) -> Bool {
+        text.range(of: word, options: .caseInsensitive) != nil
     }
 
     /// XCard.previewForSearchWords — the "title — matched snippet" row preview.
@@ -151,12 +301,12 @@ extension AppContext {
         let w = word.lowercased()
         for f in card.fields where f.type.isSearchable {
             if !f.type.isHidden || settings.searchPasswords {
-                if f.value.lowercased().contains(w) {
+                if matchesSearchTerm(w, in: f.value) {
                     return "\(f.name): …\(snippet(f.value, around: w))…"
                 }
             }
         }
-        if card.notes.lowercased().contains(w) {
+        if matchesSearchTerm(w, in: card.notes) {
             return "…\(snippet(card.notes, around: w))…"
         }
         return nil

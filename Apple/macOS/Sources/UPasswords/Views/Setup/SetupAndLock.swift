@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
-import LocalAuthentication
+@preconcurrency import LocalAuthentication
+import LocalAuthenticationEmbeddedUI
 import UniformTypeIdentifiers
 import UPasswordsCore
 import UPasswordsPersistence
@@ -36,7 +37,6 @@ struct LockWindowView: View {
 
     @State private var password = ""
     @State private var error = ""
-    @State private var touchIDAsked = false
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -121,14 +121,6 @@ struct LockWindowView: View {
                LockScreenImageStore.image(named: settings.lockBackgroundImageName) == nil {
                 Log.warn("app", "lock bg image missing, fallback gradient name=\(settings.lockBackgroundImageName)")
             }
-            // 进入锁屏自动弹出一次 Touch ID(需已保存生物识别副本)
-            if !touchIDAsked, ctx.touchIDAvailable, settings.fastUnlock, ctx.hasBiometricItem {
-                touchIDAsked = true
-                // 存量 GCD:onAppear 在主线程,延时等首帧稳定后回调仍在主队列
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    ctx.unlockWithTouchID()
-                }
-            }
         }
     }
 
@@ -155,6 +147,11 @@ struct LockWindowView: View {
                 .foregroundStyle(.white)
                 .focused($fieldFocused)
                 .onSubmit(unlock)
+                .onChange(of: password) { _, newValue in
+                    if !newValue.isEmpty {
+                        ctx.cancelTouchIDUnlock()
+                    }
+                }
         }
         .frame(width: 190, height: 27)
         .overlay(
@@ -165,7 +162,7 @@ struct LockWindowView: View {
         )
     }
 
-    /// 应用图标(保留自家 logo)+ 右下角 Touch ID 徽章(仅设备支持时显示)。
+    /// 应用图标(保留自家 logo)+ 右下角嵌入式 Touch ID 状态视图(仅设备支持时显示)。
     /// 方块 80×80 圆角 ~18,角标圆 53,粉 #FF375F,暗底 #1E1E1E,
     /// 徽章中心相对方块中心偏移 (+39.5, +26.5)。
     private var iconCluster: some View {
@@ -181,16 +178,24 @@ struct LockWindowView: View {
                 )
                 .shadow(color: .black.opacity(0.45), radius: 8, y: 3)
 
-            if ctx.touchIDAvailable {
-                ZStack {
-                    Circle()
-                        .fill(Color(red: 0.118, green: 0.118, blue: 0.118))
-                    Image(systemName: "touchid")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(Color(red: 1.0, green: 0.216, blue: 0.373))
+            if ctx.touchIDAvailable, settings.fastUnlock, ctx.hasBiometricItem {
+                EmbeddedTouchIDBadge(
+                    requestID: ctx.biometricUnlockRequestID,
+                    databaseName: ctx.databaseName
+                ) { requestID, databaseName, password in
+                    ctx.completeTouchIDUnlock(
+                        requestID: requestID,
+                        databaseName: databaseName,
+                        password: password)
                 }
+                .frame(width: 45, height: 45)
+                .clipShape(Circle())
                 .frame(width: 53, height: 53)
-                .overlay(Circle().stroke(Color(red: 0.224, green: 0.227, blue: 0.224), lineWidth: 4))
+                .background(Circle().fill(Color(red: 0.118, green: 0.118, blue: 0.118)))
+                .overlay(Circle().stroke(
+                    Color(red: 0.224, green: 0.227, blue: 0.224), lineWidth: 4))
+                .help(L10n.t("touch_id_button"))
+                .accessibilityLabel(L10n.t("touch_id_button"))
                 .offset(x: 39.5, y: 26.5)
             }
         }
@@ -198,7 +203,7 @@ struct LockWindowView: View {
 
     /// 说明文字:支持触控 ID 时与参考文案一致。
     private var subtitle: String {
-        if ctx.touchIDAvailable && settings.fastUnlock {
+        if ctx.touchIDAvailable && settings.fastUnlock && ctx.hasBiometricItem {
             return L10n.tBranded("lock_window_unlock_touch_id_text")
         }
         return L10n.tBranded("lock_window_unlock_text")
@@ -209,6 +214,7 @@ struct LockWindowView: View {
     }
 
     private func unlock() {
+        ctx.cancelTouchIDUnlock()
         Task { @MainActor in
             // 远端兜底:他机改密轮换后本地本体过期,需拉远端收敛(见 AppContext 注释)
             switch await ctx.unlockWithRemoteFallback(name: ctx.databaseName, password: password) {
@@ -229,6 +235,109 @@ struct LockWindowView: View {
                 password = ""
             }
         }
+    }
+}
+
+private struct EmbeddedTouchIDBadge: NSViewRepresentable {
+    let requestID: UUID?
+    let databaseName: String
+    let onCompletion: (UUID, String, String?) -> Void
+
+    func makeNSView(context: Context) -> EmbeddedTouchIDAuthenticationView {
+        let view = EmbeddedTouchIDAuthenticationView(frame: .zero)
+        view.configure(requestID: requestID, databaseName: databaseName, onCompletion: onCompletion)
+        return view
+    }
+
+    func updateNSView(_ nsView: EmbeddedTouchIDAuthenticationView, context: Context) {
+        nsView.configure(requestID: requestID, databaseName: databaseName, onCompletion: onCompletion)
+    }
+}
+
+@MainActor
+private final class EmbeddedTouchIDAuthenticationView: NSView {
+    private var authenticationContext: LAContext?
+    private var authenticationView: LAAuthenticationView?
+    private var requestID: UUID?
+    private var databaseName = ""
+    private var attemptedRequestID: UUID?
+    private var onCompletion: ((UUID, String, String?) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        installAuthenticationView()
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        startAuthenticationIfReady()
+    }
+
+    func configure(
+        requestID: UUID?,
+        databaseName: String,
+        onCompletion: @escaping (UUID, String, String?) -> Void
+    ) {
+        if self.requestID != requestID {
+            authenticationContext?.invalidate()
+            self.requestID = requestID
+            attemptedRequestID = nil
+            installAuthenticationView()
+        }
+        self.databaseName = databaseName
+        self.onCompletion = onCompletion
+        startAuthenticationIfReady()
+    }
+
+    private func installAuthenticationView() {
+        authenticationView?.removeFromSuperview()
+        let context = LAContext()
+        let view = LAAuthenticationView(context: context, controlSize: .small)
+        context.localizedReason = L10n.t("touch_id_unlock_reason")
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        authenticationContext = context
+        authenticationView = view
+    }
+
+    private func startAuthenticationIfReady() {
+        guard window != nil,
+              let requestID,
+              requestID != attemptedRequestID,
+              let authenticationContext else {
+            return
+        }
+        attemptedRequestID = requestID
+
+        let requestedDatabaseName = databaseName
+        let context = authenticationContext
+        Log.info("keychain", "starting embedded Touch ID evaluation")
+        PasswordStore.biometricPassword(
+            databaseName: requestedDatabaseName,
+            accessGroup: AppContext.credentialProviderKeychainAccessGroup,
+            context: context
+        ) { [weak self] password in
+            Task { @MainActor [weak self] in
+                self?.finish(
+                    requestID: requestID,
+                    databaseName: requestedDatabaseName,
+                    password: password)
+            }
+        }
+    }
+
+    private func finish(requestID: UUID, databaseName: String, password: String?) {
+        onCompletion?(requestID, databaseName, password)
     }
 }
 
@@ -278,30 +387,14 @@ struct SetupWindowView: View {
                     }
                 )
             } else if mode == .create {
-                Spacer()
-                createForm
-                Spacer()
-
-                if !error.isEmpty {
-                    Text(error).foregroundStyle(.red).font(.callout)
+                ScrollView {
+                    createForm
+                        .frame(maxWidth: 560)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, alignment: .top)
                 }
-                HStack {
-                    Button(L10n.t("restore_from_cloud_button")) {
-                        Log.info("ui", "setup: switch to cloud restore")
-                        error = ""
-                        mode = .restoreCloud
-                    }
-                    Button(L10n.t("restore_from_local_button")) {
-                        Log.info("ui", "setup: switch to local restore")
-                        error = ""
-                        mode = .restoreLocal
-                    }
-                    Button(L10n.t("continue_button"), action: create)
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(name.isEmpty || password.isEmpty)
-                }
-                .padding(.bottom, 28)
+                createFooter
             } else if mode == .restoreCloud {
                 RestoreCloudForm(onBack: {
                     Log.info("ui", "setup: back to create from cloud restore")
@@ -353,17 +446,42 @@ struct SetupWindowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: 380)
+                .frame(maxWidth: 480)
             }
-
-            Divider()
-
-            setupItem(2) { Text(L10n.t("database_setup_item_2")) }
-                .font(.body)
-            setupItem(3) { Text(L10n.t("database_setup_item_3")) }
-                .font(.body)
         }
-        .padding(.horizontal, 60)
+    }
+
+    private var createFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !error.isEmpty {
+                Label(error, systemImage: "exclamationmark.circle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 10) {
+                Button(L10n.t("restore_from_cloud_button")) {
+                    Log.info("ui", "setup: switch to cloud restore")
+                    error = ""
+                    mode = .restoreCloud
+                }
+                Button(L10n.t("restore_from_local_button")) {
+                    Log.info("ui", "setup: switch to local restore")
+                    error = ""
+                    mode = .restoreLocal
+                }
+                Spacer(minLength: 8)
+                Button(L10n.t("continue_button"), action: create)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.isEmpty || password.isEmpty)
+            }
+        }
+        .frame(maxWidth: 560)
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity)
     }
 
     private func setupItem(_ n: Int, @ViewBuilder title: () -> some View) -> some View {
@@ -464,7 +582,7 @@ private struct AccountStepView: View {
     }
 }
 
-/// 向导「在线恢复」表单:自动从服务端注册表列出账户名下的库 →
+/// 向导「在线恢复」表单:邮箱验证码登录 → 列出账户下的密码库 →
 /// 选一个并输入该库主密码 → 服务端信封 + 库体镜像解密落为本地库,
 /// 直接进入主界面。尚无服务端镜像的库行尾标注(在原设备同步一次后即可恢复);
 /// 离线迁移走「本地还原」(.upw/.upwkey 文件对)。
@@ -474,10 +592,23 @@ struct RestoreCloudForm: View {
 
     @State private var restoring = false
     @State private var serverVaults: [RelayClient.VaultRecord] = []
-    @State private var loaded = false
+    @State private var email = ""
+    @State private var code = ""
+    @State private var codeRequestEmail = ""
+    @State private var signedInEmail = ""
+    @State private var isAuthenticated = false
+    @State private var sendingCode = false
+    @State private var signingIn = false
+    @State private var loadingVaults = false
+    @State private var vaultListFailed = false
     @State private var selected = ""
     @State private var password = ""
     @State private var error = ""
+    @StateObject private var resend = ResendCountdown()
+
+    private var trimmedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// 选中即可恢复:行级同步下空库同样合法(信封+0 行 → 空库接管,
     /// 其他设备同步后的条目随后拉取)。
@@ -489,60 +620,115 @@ struct RestoreCloudForm: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 22) {
                     setupItem(2) { Text(L10n.t("database_setup_item_2")) }
-                        .font(.body.bold())
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(.primary)
 
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 10) {
-                            if !loaded {
-                                HStack(spacing: 8) {
-                                    ProgressView().controlSize(.small)
-                                    Text(L10n.t("cloud_restore_loading_hint"))
+                    if !isAuthenticated {
+                        loginForm
+                    } else {
+                        HStack(spacing: 12) {
+                            Label(signedInEmail, systemImage: "person.crop.circle")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 8)
+                            Button(L10n.t("cloud_restore_change_account_button")) {
+                                changeAccount()
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(loadingVaults || restoring)
+                        }
+
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 14) {
+                                if loadingVaults {
+                                    HStack(spacing: 10) {
+                                        ProgressView().controlSize(.small)
+                                        Text(L10n.t("cloud_restore_loading_hint"))
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(minHeight: 56, alignment: .leading)
+                                } else if vaultListFailed {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        Label {
+                                            Text(L10n.t("cloud_restore_list_failed_hint"))
+                                                .font(.callout)
+                                                .foregroundStyle(.secondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        } icon: {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Button(L10n.t("try_again_button")) {
+                                            Task { await loadVaults() }
+                                        }
+                                    }
+                                    .frame(minHeight: 56, alignment: .leading)
+                                } else if serverVaults.isEmpty {
+                                    Label {
+                                        Text(L10n.t("cloud_restore_no_vaults_hint"))
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    } icon: {
+                                        Image(systemName: "icloud.and.arrow.down")
+                                            .font(.title3)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(minHeight: 56, alignment: .leading)
+                                } else {
+                                    Picker("", selection: $selected) {
+                                        ForEach(serverVaults.map(\.name), id: \.self) { name in
+                                            Text(name).tag(name)
+                                        }
+                                    }
+                                    .pickerStyle(.radioGroup)
+                                    .labelsHidden()
+                                    Text(L10n.t("cloud_restore_server_list_hint"))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if !loadingVaults, !vaultListFailed, selectedRecord != nil {
+                            GroupBox {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    LabeledRow(label: L10n.t("password_prompt")) {
+                                        SecureField("", text: $password)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+                                    Text(L10n.t("cloud_restore_password_hint"))
                                         .font(.callout)
                                         .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
-                            } else if serverVaults.isEmpty {
-                                Text(L10n.t("cloud_restore_empty_hint"))
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Picker("", selection: $selected) {
-                                    ForEach(serverVaults.map(\.name), id: \.self) { n in
-                                        Text(n).tag(n)
-                                    }
-                                }
-                                .pickerStyle(.radioGroup)
-                                .labelsHidden()
-                                Text(L10n.t("cloud_restore_server_list_hint"))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
-                        .frame(maxWidth: 420)
                     }
-
-                    LabeledRow(label: L10n.t("password_prompt")) {
-                        SecureField("", text: $password)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    Text(L10n.t("cloud_restore_password_hint"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
 
                     if !error.isEmpty {
-                        Text(error)
+                        Label(error, systemImage: "exclamationmark.circle.fill")
                             .font(.callout)
                             .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(.horizontal, 60)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 24)
+                .frame(maxWidth: 640, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
 
             HStack {
                 Button(L10n.t("cancel_button"), action: onBack)
+                Spacer()
                 Button {
                     Log.info("ui", "online restore: restore \"\(selected)\"")
                     Task { await restore() }
@@ -553,19 +739,133 @@ struct RestoreCloudForm: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(selectedRecord == nil || password.isEmpty || restoring)
+                .disabled(!isAuthenticated || loadingVaults || vaultListFailed
+                          || selectedRecord == nil || password.isEmpty || restoring)
             }
+            .frame(maxWidth: 592)
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
             .padding(.bottom, 28)
         }
-        .task {
-            // 引导账户步登录在先:进入本表单即从注册表列出账户名下的库
-            if let records = await ctx.relayVaultsForRestore() {
-                serverVaults = records
-                selected = records.first?.name ?? ""
+        .onChange(of: trimmedEmail) { _, address in
+            if address != codeRequestEmail {
+                resend.start(0)
             }
-            loaded = true
         }
+    }
+
+    private var loginForm: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(L10n.t("cloud_restore_login_hint"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                LabeledRow(label: L10n.t("relay_email_placeholder")) {
+                    TextField("", text: $email)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(sendingCode || signingIn)
+                }
+
+                LabeledRow(label: L10n.t("relay_code_placeholder")) {
+                    HStack(spacing: 8) {
+                        TextField("", text: $code)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit(signIn)
+                        Button {
+                            requestCode()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if sendingCode { ProgressView().controlSize(.small) }
+                                Text(resend.buttonTitle(L10n.t("relay_send_code_button")))
+                            }
+                        }
+                        .disabled(!trimmedEmail.contains("@") || sendingCode || signingIn
+                                  || resend.isRunning)
+                    }
+                }
+
+                HStack {
+                    Spacer()
+                    Button {
+                        signIn()
+                    } label: {
+                        HStack(spacing: 6) {
+                            if signingIn { ProgressView().controlSize(.small) }
+                            Text(L10n.t("cloud_restore_login_button"))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!trimmedEmail.contains("@")
+                              || code.count != RelayClient.verificationCodeLength
+                              || sendingCode || signingIn)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func requestCode() {
+        guard trimmedEmail.contains("@"), !sendingCode, !resend.isRunning else { return }
+        let address = trimmedEmail
+        Log.info("ui", "online restore: request email verification code")
+        sendingCode = true
+        Task {
+            let cooldown = await ctx.relaySendCode(email: address)
+            codeRequestEmail = cooldown > 0 ? address : ""
+            resend.start(cooldown)
+            sendingCode = false
+        }
+    }
+
+    private func signIn() {
+        guard trimmedEmail.contains("@"),
+              code.count == RelayClient.verificationCodeLength,
+              !signingIn, !sendingCode else { return }
+        let address = trimmedEmail
+        let enteredCode = code
+        Log.info("ui", "online restore: verify email before listing vaults")
+        signingIn = true
+        Task {
+            if await ctx.relayLoginOnly(email: address, code: enteredCode) {
+                signedInEmail = address
+                isAuthenticated = true
+                code = ""
+                await loadVaults()
+            }
+            signingIn = false
+        }
+    }
+
+    private func loadVaults() async {
+        loadingVaults = true
+        vaultListFailed = false
+        error = ""
+        guard let records = await ctx.relayVaultsForRestore() else {
+            loadingVaults = false
+            vaultListFailed = true
+            return
+        }
+        serverVaults = records
+        selected = records.first?.name ?? ""
+        password = ""
+        loadingVaults = false
+    }
+
+    private func changeAccount() {
+        isAuthenticated = false
+        signedInEmail = ""
+        email = ""
+        code = ""
+        codeRequestEmail = ""
+        resend.start(0)
+        serverVaults = []
+        selected = ""
+        password = ""
+        vaultListFailed = false
+        error = ""
     }
 
     private func setupItem(_ n: Int, @ViewBuilder title: () -> some View) -> some View {
@@ -614,13 +914,13 @@ struct RestoreLocalForm: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 22) {
                     setupItem(3) { Text(L10n.t("database_setup_item_3")) }
-                        .font(.body.bold())
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(.primary)
 
                     GroupBox {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 14) {
                             LabeledRow(label: L10n.t("database_name_prompt")) {
                                 TextField("Main", text: $name)
                                     .textFieldStyle(.roundedBorder)
@@ -640,54 +940,72 @@ struct RestoreLocalForm: View {
                                     }
                                 }
                             }
-                            LabeledRow(label: L10n.t("local_key_file_prompt")) {
-                                HStack(spacing: 8) {
-                                    Button(envelopeURL == nil
-                                           ? L10n.t("local_pick_key_button")
-                                           : envelopeURL?.lastPathComponent ?? "") {
-                                        pickKeyFile()
-                                    }
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    if envelopeURL != nil {
-                                        Image(systemName: "checkmark.circle.fill")
+
+                            if bodyURL != nil {
+                                LabeledRow(label: L10n.t("local_key_file_prompt")) {
+                                    if let envelopeURL, envelopeAutoFound {
+                                        Label(envelopeURL.lastPathComponent,
+                                              systemImage: "checkmark.circle.fill")
                                             .foregroundStyle(.green)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    } else {
+                                        HStack(spacing: 8) {
+                                            Button(envelopeURL?.lastPathComponent
+                                                   ?? L10n.t("local_pick_key_button")) {
+                                                pickKeyFile()
+                                            }
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                            if envelopeURL != nil {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundStyle(.green)
+                                            }
+                                        }
                                     }
                                 }
+                                if envelopeURL == nil {
+                                    Label(L10n.t("local_key_missing_hint"),
+                                          systemImage: "exclamationmark.triangle")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else if envelopeAutoFound {
+                                    Text(L10n.t("local_key_autofound_hint"))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            if bodyURL != nil && envelopeURL == nil {
-                                Label(L10n.t("local_key_missing_hint"), systemImage: "exclamationmark.triangle")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else if envelopeAutoFound {
-                                Label(L10n.t("local_key_autofound_hint"), systemImage: "checkmark.circle")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: 420)
-                    }
 
-                    LabeledRow(label: L10n.t("password_prompt")) {
-                        SecureField("", text: $password)
-                            .textFieldStyle(.roundedBorder)
+                            Divider()
+
+                            LabeledRow(label: L10n.t("password_prompt")) {
+                                SecureField("", text: $password)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            Text(L10n.t("local_restore_hint"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text(L10n.t("local_restore_hint"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
 
                     if !error.isEmpty {
-                        Text(error)
+                        Label(error, systemImage: "exclamationmark.circle.fill")
                             .font(.callout)
                             .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(.horizontal, 60)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 24)
+                .frame(maxWidth: 640, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
 
             HStack {
                 Button(L10n.t("cancel_button"), action: onBack)
+                Spacer()
                 Button {
                     Log.info("ui", "local restore: restore \"\(name)\"")
                     Task { await restore() }
@@ -701,6 +1019,9 @@ struct RestoreLocalForm: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!readyToRestore || restoring)
             }
+            .frame(maxWidth: 592)
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
             .padding(.bottom, 28)
         }
     }

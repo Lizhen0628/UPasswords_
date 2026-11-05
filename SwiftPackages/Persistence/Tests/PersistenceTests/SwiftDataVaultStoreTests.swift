@@ -151,6 +151,20 @@ final class SwiftDataVaultStoreTests: XCTestCase {
         metadataOnly.cards[0].files[0].discardLocalContent()
         try native.replace(metadataOnly, name: "Main", vaultKey: originalKey)
 
+        let lazyLoaded = try native.loadUnlocked(
+            name: "Main", password: "migration-password", hydrateAttachments: false)
+        XCTAssertNil(lazyLoaded.0.cards[0].files[0].data)
+        let version = AttachmentDownloadLedger.Version(
+            cardID: card.id, attachmentID: attachmentID, contentVersion: contentVersion)
+        XCTAssertEqual(try native.cachedAttachmentBytes(vaultName: "Main")[version], bytes.count)
+        XCTAssertEqual(try native.loadAttachmentContent(
+            vaultName: "Main",
+            cardID: card.id,
+            attachmentID: attachmentID,
+            contentVersion: contentVersion,
+            vaultKey: originalKey
+        ), bytes)
+
         let loaded = try native.loadUnlocked(name: "Main", password: "migration-password").0
         XCTAssertEqual(loaded.cards[0].files[0].data, bytes)
         XCTAssertEqual(loaded.cards[0].files[0].contentVersion, contentVersion)

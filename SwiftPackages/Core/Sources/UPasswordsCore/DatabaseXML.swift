@@ -179,6 +179,9 @@ extension PasswordDatabase {
             s += "        <field"
             if f.hasPersistentID { s += " id=\"\(f.id.uuidString)\"" }
             s += " name=\"\(XMLEscape(f.name))\" type=\"\(f.type.rawValue)\" autofill=\"\(f.autofill.rawValue)\""
+            if f.type == .website {
+                s += " site-match=\"\(f.siteMatch.rawValue)\""
+            }
             if !f.history.isEmpty {
                 let json = Self.historyJSON(f.history)
                 s += " history=\"\(XMLEscape(json))\""
@@ -248,6 +251,9 @@ extension PasswordDatabase {
             if field.hasPersistentID { s += " id=\"\(field.id.uuidString)\"" }
             s += " name=\"\(XMLEscape(field.name))\""
             s += " type=\"\(field.type.rawValue)\" autofill=\"\(field.autofill.rawValue)\""
+            if field.type == .website {
+                s += " site-match=\"\(field.siteMatch.rawValue)\""
+            }
             if !field.history.isEmpty {
                 s += " history=\"\(XMLEscape(Self.historyJSON(field.history)))\""
             }
@@ -429,6 +435,7 @@ final class DBXMLParser: NSObject, XMLParserDelegate {
             } else {
                 f.autofill = .off
             }
+            f.siteMatch = attrs["site-match"].flatMap(SiteMatchMode.init(rawValue:)) ?? .domain
             f.history = PasswordDatabase.history(fromJSON: attrs["history"])
             currentField = f
         case "image":

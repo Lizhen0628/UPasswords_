@@ -145,6 +145,31 @@ public enum Autofill: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+/// Website matching rule used by browser and platform AutoFill providers.
+public enum SiteMatchMode: String, CaseIterable, Codable, Identifiable {
+    case domain
+    case host
+    case startsWith
+    case exactURL
+    case regex
+    case never
+    case wildcard
+
+    public var id: String { rawValue }
+
+    public var localizedName: String {
+        switch self {
+        case .domain: return L10n.t("site_match_domain", fallback: "基础域名")
+        case .host: return L10n.t("site_match_host", fallback: "主机")
+        case .startsWith: return L10n.t("site_match_starts_with", fallback: "开头是")
+        case .exactURL: return L10n.t("site_match_exact", fallback: "精确")
+        case .regex: return L10n.t("site_match_regex", fallback: "正则表达式")
+        case .never: return L10n.t("site_match_never", fallback: "从不")
+        case .wildcard: return L10n.t("site_match_wildcard", fallback: "通配规则（兼容）")
+        }
+    }
+}
+
 /// A single field value change, kept per-field
 /// (stored as JSON on the field: values + modification times).
 public struct HistoryEntry: Codable, Equatable, Identifiable {
@@ -177,8 +202,10 @@ public struct Field: Codable, Equatable, Identifiable {
     ///   - value: 当前明文值。
     ///   - autofill: 自动填充词条。
     ///   - history: 随库加密的旧值集合。
+    ///   - siteMatch: 网站字段的自动填充匹配规则。
     public init(id: UUID = UUID(), name: String, type: FieldType = .text, value: String = "",
-                autofill: Autofill = .off, history: [HistoryEntry] = []) {
+                autofill: Autofill = .off, history: [HistoryEntry] = [],
+                siteMatch: SiteMatchMode = .domain) {
         self.id = id
         hasPersistentID = true
         self.name = name
@@ -186,6 +213,7 @@ public struct Field: Codable, Equatable, Identifiable {
         self.value = value
         self.autofill = autofill
         self.history = history
+        self.siteMatch = siteMatch
     }
 
     /// 当前内存模型中的字段标识；旧 XML 缺少持久 ID 时会使用临时值。
@@ -200,11 +228,13 @@ public struct Field: Codable, Equatable, Identifiable {
     public var value: String = ""
     /// 自动填充的语义词条；off 表示不参与语义匹配。
     public var autofill: Autofill = .off
+    /// Website matching rule. Older data without the XML attribute uses base-domain matching.
+    public var siteMatch: SiteMatchMode = .domain
     /// 旧字段值及其修改时间，最多由 putHistoryValue 保留 20 项。
     public var history: [HistoryEntry] = []
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, value, autofill, history
+        case id, name, type, value, autofill, history, siteMatch
     }
 
     public init(from decoder: Decoder) throws {
@@ -217,6 +247,7 @@ public struct Field: Codable, Equatable, Identifiable {
         value = try container.decode(String.self, forKey: .value)
         autofill = try container.decode(Autofill.self, forKey: .autofill)
         history = try container.decode([HistoryEntry].self, forKey: .history)
+        siteMatch = try container.decodeIfPresent(SiteMatchMode.self, forKey: .siteMatch) ?? .domain
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -229,6 +260,7 @@ public struct Field: Codable, Equatable, Identifiable {
         try container.encode(value, forKey: .value)
         try container.encode(autofill, forKey: .autofill)
         try container.encode(history, forKey: .history)
+        try container.encode(siteMatch, forKey: .siteMatch)
     }
 
     /// 当前值是否为非空字符串；不自动裁剪空白。
@@ -430,7 +462,7 @@ public struct Card: Codable, Equatable, Identifiable {
     /// 是否为模板卡；模板不参与普通密码列表与安全统计。
     public var template: Bool = false
     /// 卡片是否允许提供自动填充候选。
-    public var autofillEnabled: Bool = false          // card-level autofill="on|off"
+    public var autofillEnabled: Bool = true           // card-level autofill="on|off"
     /// 是否收藏；不改变卡片所属标签。
     public var favorite: Bool = false                 // favorite="true"
     /// 是否归档；与回收站状态分别保存。

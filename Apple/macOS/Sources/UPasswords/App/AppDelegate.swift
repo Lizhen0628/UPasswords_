@@ -5,6 +5,7 @@ import UPasswordsCore
 /// 菜单栏常驻入口由 StatusItemController 承担。
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = StatusItemController()
+    private var didHandleInitialActivation = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Log.bootstrap()
@@ -17,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 点程序坞图标时若无窗口则重新拉起;返回 false 阻止系统重复处理
         if !flag {
             StatusItemController.showMainWindow()
+            StatusItemController.requestTouchIDUnlockAfterActivation()
             return false
         }
         return true
@@ -27,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationDidBecomeActive(_ notification: Notification) {
         Log.debug("app", "app active")
+        guard !didHandleInitialActivation else { return }
+        didHandleInitialActivation = true
+
+        guard AppContext.shared.phase == .locked else { return }
+        Log.info("keychain", "initial app activation while locked; waiting for the lock window")
+        StatusItemController.requestTouchIDUnlockAfterActivation()
     }
     func applicationWillTerminate(_ notification: Notification) {
         Log.info("app", "application will terminate → flushing session save")

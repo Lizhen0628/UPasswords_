@@ -1,4 +1,5 @@
 import { safeWebsiteUrl } from "./domain.js";
+import { parseSiteAssociation } from "./site-matching.js";
 import type { ExtensionItem } from "./types.js";
 import { VaultCryptoError } from "./vault-crypto.js";
 
@@ -88,8 +89,11 @@ export function createLoginItemXml(item: NewLoginItem, nowMs = Date.now()): stri
         throw new VaultCryptoError("bad_xml_text");
     }
     if (!item.title.trim()) throw new VaultCryptoError("bad_item_title");
-    const websiteUrl = item.url === "" ? "" : item.siteMatch === "wildcard"
-        ? safeWebsiteUrl(item.url.replaceAll("*", "wildcard-token")) : safeWebsiteUrl(item.url);
+    const websiteAssociation = item.url === "" ? null : parseSiteAssociation({
+        url: item.url,
+        mode: item.siteMatch ?? "domain",
+    });
+    const websiteUrl = item.url === "" ? "" : websiteAssociation?.url ?? null;
     if (item.url !== "" && !websiteUrl) throw new VaultCryptoError("bad_item_url");
     if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") {
         throw new VaultCryptoError("dom_unavailable");
@@ -108,8 +112,7 @@ export function createLoginItemXml(item: NewLoginItem, nowMs = Date.now()): stri
         ...(item.sites ?? []),
     ].filter(site => site.url.trim());
     for (const association of associations) {
-        const safe = safeWebsiteUrl(association.mode === "wildcard" ? association.url.replaceAll("*", "wildcard-token") : association.url);
-        if (!safe || !["domain", "wildcard", "exactURL"].includes(association.mode)) throw new VaultCryptoError("bad_item_url");
+        if (!parseSiteAssociation(association)) throw new VaultCryptoError("bad_item_url");
     }
     const fields: NonNullable<NewLoginItem["fields"]> = item.fields?.length ? item.fields : [
         { name: "@string/login_field", type: "login", autofill: "username", value: item.username },
@@ -118,14 +121,15 @@ export function createLoginItemXml(item: NewLoginItem, nowMs = Date.now()): stri
             name: index === 0 ? "@string/url_field" : "Website",
             type: "website",
             autofill: "url",
-            value: site.mode === "wildcard" ? site.url : safeWebsiteUrl(site.url) ?? site.url,
+            value: site.mode === "wildcard" || site.mode === "regex"
+                ? site.url : safeWebsiteUrl(site.url) ?? site.url,
             siteMatch: site.mode,
         })),
     ];
     if (!fields.some(field => field.type === "website")) fields.push({ name: "@string/url_field", type: "website", autofill: "url", value: "" });
     for (const field of fields) {
         if (field.type === "website" && field.value.trim()
-            && !safeWebsiteUrl(field.siteMatch === "wildcard" ? field.value.replaceAll("*", "wildcard-token") : field.value)) {
+            && !parseSiteAssociation({ url: field.value, mode: field.siteMatch ?? "domain" })) {
             throw new VaultCryptoError("bad_item_url");
         }
         const node = document.createElement("field");
@@ -465,7 +469,7 @@ export function updateItemXml(sourceXml: string, edit: ItemEdit, nowMs = Date.no
         for (const field of edit.fields) {
             if (!field.name || !field.type || typeof field.value !== "string") throw new VaultCryptoError("bad_item_field");
             if (field.type === "website" && field.value.trim()
-                && !safeWebsiteUrl(field.siteMatch === "wildcard" ? field.value.replaceAll("*", "wildcard-token") : field.value)) {
+                && !parseSiteAssociation({ url: field.value, mode: field.siteMatch ?? "domain" })) {
                 throw new VaultCryptoError("bad_item_url");
             }
             const element = field.id ? byID.get(field.id.toLowerCase()) : undefined;

@@ -108,7 +108,10 @@ extension AppContext {
                                rekeyBackupHistoryFrom: oldVaultKey)
         PasswordStore.savePassword(new, databaseName: databaseName)
         if settings.fastUnlock && PasswordStore.biometricAvailable() {
-            PasswordStore.savePasswordForBiometric(new, databaseName: databaseName)
+            PasswordStore.savePasswordForBiometric(
+                new,
+                databaseName: databaseName,
+                sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
         }
         password = new
         // guard vaultKey 判空用完即弃;轮换后的会话密钥写回属性
@@ -451,7 +454,10 @@ extension AppContext {
                 syncSessionID = UUID()
                 PasswordStore.savePassword(newPassword, databaseName: name)
                 if settings.fastUnlock && PasswordStore.biometricAvailable() {
-                    PasswordStore.savePasswordForBiometric(newPassword, databaseName: name)
+                    PasswordStore.savePasswordForBiometric(
+                        newPassword,
+                        databaseName: name,
+                        sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
                 }
             } else {
                 try unlock(name: name, password: newPassword)

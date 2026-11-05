@@ -375,7 +375,7 @@
                 <button id="newLoginButton" type="button" data-zh="新建登录" data-en="New login"></button>
             </div>
             <p id="syncSummary" class="sync-summary" aria-live="polite"></p>
-            <section class="site-context" id="siteContext" hidden><div class="site-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/></svg></div><div class="site-copy"><span class="site-caption" data-zh="当前页面 · 点此快速填充匹配项" data-en="Current page · click to fill the first match"></span><div class="host" id="host"></div></div></section>
+            <button class="site-context" id="siteContext" type="button" hidden><span class="site-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/></svg></span><span class="site-copy"><span class="site-caption" data-zh="当前页面 · 匹配项优先显示" data-en="Current page · matching items are shown first"></span><span class="host" id="host"></span></span></button>
             <section class="suggestion-section" id="suggestionSection" aria-labelledby="suggestionHeading" hidden><div class="list-heading"><h2 id="suggestionHeading" data-zh="当前网站" data-en="Autofill suggestions"></h2></div><ul id="suggestions"></ul></section>
             <div class="list-heading"><h2 id="itemsHeading" data-zh="全部条目" data-en="All items"></h2><span id="resultCount" aria-live="polite">0</span></div>
             <ul id="items"></ul>
@@ -405,7 +405,7 @@
             <label class="field"><span data-zh="标题" data-en="Title"></span><input id="newLoginTitle" autocomplete="off"></label>
             <label class="field"><span data-zh="用户名" data-en="Username"></span><input id="newLoginUsername" autocomplete="off"></label>
             <label class="field"><span data-zh="密码" data-en="Password"></span><input id="newLoginPassword" type="password" autocomplete="new-password"></label>
-            <div class="field"><label for="newLoginUrl"><span data-zh="网站地址" data-en="Website URL"></span></label><div class="row"><input id="newLoginUrl" type="url" autocomplete="url"><select id="newLoginSiteMatch" aria-label="Website match mode"><option value="domain" data-zh="基于域名" data-en="Domain"></option><option value="wildcard" data-zh="基于规则" data-en="Wildcard rule"></option><option value="exactURL" data-zh="完全匹配" data-en="Exact URL"></option></select></div></div>
+            <div class="field"><label for="newLoginUrl"><span data-zh="网站地址或匹配规则" data-en="Website address or match rule"></span></label><div class="row"><input id="newLoginUrl" type="text" autocomplete="url"><select id="newLoginSiteMatch" aria-label="Website match mode"><option value="domain" data-zh="基础域名" data-en="Base domain"></option><option value="host" data-zh="主机" data-en="Host"></option><option value="startsWith" data-zh="开头是" data-en="Starts with"></option><option value="exactURL" data-zh="精确" data-en="Exact"></option><option value="regex" data-zh="正则表达式" data-en="Regular expression"></option><option value="never" data-zh="从不" data-en="Never"></option><option value="wildcard" data-zh="通配规则（兼容）" data-en="Wildcard (legacy)"></option></select></div></div>
             <div id="newLoginAdditionalSites"></div>
             <button class="secondary" id="addLoginWebsiteButton" type="button" data-zh="添加网站关联" data-en="Add website association"></button>
             <label class="field"><span data-zh="备注" data-en="Notes"></span><textarea id="newLoginNotes" rows="3"></textarea></label>

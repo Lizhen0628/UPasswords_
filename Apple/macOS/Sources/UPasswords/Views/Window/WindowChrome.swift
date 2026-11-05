@@ -64,6 +64,8 @@ final class WindowChromeManager: NSObject {
 
     func attach(window: NSWindow, mode: WindowChromeMode) {
         let isNewWindow = self.window !== window
+        let modeChanged = self.mode != mode
+        guard isNewWindow || modeChanged else { return }
         self.window = window
         self.mode = mode
         log("attach mode=\(mode) window=\(ObjectIdentifier(window).hashValue) isNewWindow=\(isNewWindow) frame=\(window.frame)")
@@ -389,6 +391,7 @@ struct WindowChromeConfigurator: NSViewRepresentable {
         var mode: WindowChromeMode
         private weak var sourceView: NSView?
         private var attempts = 0
+        private var retryScheduled = false
 
         init(mode: WindowChromeMode) { self.mode = mode }
 
@@ -398,21 +401,29 @@ struct WindowChromeConfigurator: NSViewRepresentable {
 
         /// 窗口可能尚未挂载:短间隔重试,直到拿到窗口为止(最多 ~8s)
         func retryAttach(from view: NSView) {
-            sourceView = view
-            attempts = 0
+            if sourceView !== view {
+                sourceView = view
+                attempts = 0
+                retryScheduled = false
+            }
             tryAttach()
         }
 
         private func tryAttach() {
             if let win = sourceView?.window {
+                attempts = 0
+                retryScheduled = false
                 WindowChromeManager.shared.attach(window: win, mode: mode)
                 return
             }
+            guard attempts < Self.maxAttachAttempts, !retryScheduled else { return }
             attempts += 1
-            guard attempts < Self.maxAttachAttempts else { return }
+            retryScheduled = true
             // 存量 GCD:view 生命周期在主线程,重试回调仍在主队列,无需回主线程
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.tryAttach()
+                guard let self else { return }
+                self.retryScheduled = false
+                self.tryAttach()
             }
         }
     }

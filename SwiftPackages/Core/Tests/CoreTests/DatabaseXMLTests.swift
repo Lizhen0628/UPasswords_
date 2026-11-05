@@ -32,6 +32,8 @@ final class DatabaseXMLTests: XCTestCase {
             Field(name: "密码", type: .password, value: "hunter2", autofill: .currentPassword,
                   history: [HistoryEntry(value: "old1", time: 1680000000000)]),
             Field(name: "一次性代码", type: .oneTimePassword, value: "JBSWY3DPEHPK3PXP", autofill: .oneTimeCode),
+            Field(name: "网站", type: .website, value: "https://login.example.com",
+                  autofill: .url, siteMatch: .host),
         ]
         card.notes = "多行\n笔记"
         card.labelIds = [l1.id, l2.id]
@@ -53,12 +55,13 @@ final class DatabaseXMLTests: XCTestCase {
         XCTAssertEqual(c.favorite, true)
         XCTAssertEqual(c.autofillEnabled, true)
         XCTAssertEqual(c.expiration, 4102444800000)
-        XCTAssertEqual(c.fields.count, 3)
+        XCTAssertEqual(c.fields.count, 4)
         XCTAssertEqual(c.fields.map(\.id), db.cards[0].fields.map(\.id))
         XCTAssertTrue(c.fields.allSatisfy(\.hasPersistentID))
         XCTAssertEqual(c.fields[1].value, "hunter2")
         XCTAssertEqual(c.fields[1].history.first?.value, "old1")
         XCTAssertEqual(c.fields[2].type, .oneTimePassword)
+        XCTAssertEqual(c.fields[3].siteMatch, .host)
         XCTAssertEqual(c.notes, "多行\n笔记")
         XCTAssertEqual(c.labelIds, db.cards[0].labelIds)
         XCTAssertEqual(c.images.first?.data, Data([0x89, 0x50, 0x4E, 0x47]))
@@ -68,6 +71,22 @@ final class DatabaseXMLTests: XCTestCase {
         XCTAssertEqual(c.files.first?.name, "key.txt")
         XCTAssertEqual(c.files.first?.id, db.cards[0].files.first?.id)
         XCTAssertEqual(c.files.first?.contentVersion, db.cards[0].files.first?.contentVersion)
+    }
+
+    func testLegacyWebsiteFieldsDefaultToBaseDomainRule() throws {
+        let xml = """
+        <database><card id="\(UUID().uuidString)"><field name="Website" type="website" value="" autofill="url">example.com</field></card></database>
+        """
+        let database = try PasswordDatabase.parse(Data(xml.utf8))
+        XCTAssertEqual(database.cards.first?.fields.first?.siteMatch, .domain)
+        let serialized = String(decoding: database.xmlData(), as: UTF8.self)
+        XCTAssertTrue(serialized.contains("site-match=\"domain\""))
+    }
+
+    func testFieldCodableDefaultsMissingSiteRule() throws {
+        let json = Data("{\"name\":\"Website\",\"type\":\"website\",\"value\":\"example.com\",\"autofill\":\"url\",\"history\":[]}".utf8)
+        let field = try JSONDecoder().decode(Field.self, from: json)
+        XCTAssertEqual(field.siteMatch, .domain)
     }
 
     func testLegacyChildIDsRemainUntrustedAndAreNotInventedOnSerialization() throws {

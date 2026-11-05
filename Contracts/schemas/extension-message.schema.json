@@ -447,6 +447,29 @@
                     "additionalProperties": false
                 },
                 {
+                    "properties": {
+                        "type": {
+                            "const": "site-candidates"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "type": {
+                            "const": "select-site-item"
+                        },
+                        "itemID": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    },
+                    "required": [
+                        "itemID"
+                    ],
+                    "additionalProperties": false
+                },
+                {
                     "type": "object",
                     "properties": {
                         "type": {
@@ -649,6 +672,80 @@
                         "count",
                         "unlocked",
                         "profileAvailable"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "type": {
+                            "const": "site-candidates"
+                        },
+                        "candidates": {
+                            "type": "array",
+                            "maxItems": 8,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id",
+                                    "title",
+                                    "username"
+                                ],
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "title": {
+                                        "type": "string"
+                                    },
+                                    "username": {
+                                        "type": "string"
+                                    }
+                                },
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": [
+                        "candidates"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "type": {
+                            "const": "site-fill-candidate"
+                        },
+                        "expectedOrigin": {
+                            "type": "string",
+                            "format": "uri"
+                        },
+                        "username": {
+                            "type": "string",
+                            "description": "Returned only to the requesting isolated content script after an explicit user selection."
+                        },
+                        "password": {
+                            "type": "string",
+                            "description": "Returned only to the requesting isolated content script after an explicit user selection; never stored or logged."
+                        }
+                    },
+                    "required": [
+                        "expectedOrigin",
+                        "username",
+                        "password"
+                    ],
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "type": {
+                            "const": "site-fill-rejected"
+                        },
+                        "reason": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "reason"
                     ],
                     "additionalProperties": false
                 },

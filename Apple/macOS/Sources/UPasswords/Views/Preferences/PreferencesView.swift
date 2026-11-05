@@ -395,7 +395,9 @@ struct SecurityPane: View {
                     // 开启时保存当前数据库密码的生物识别副本
                     ctx.enableTouchIDUnlock()
                 } else {
-                    PasswordStore.removeBiometricPassword(databaseName: ctx.databaseName)
+                    PasswordStore.removeBiometricPassword(
+                        databaseName: ctx.databaseName,
+                        sharedAccessGroup: AppContext.credentialProviderKeychainAccessGroup)
                 }
             }
         )

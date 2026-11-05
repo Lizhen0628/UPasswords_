@@ -39,7 +39,7 @@ public enum Templates {
             ("url_field", .website, .url),
             ("one_time_password_field", .oneTimePassword, .oneTimeCode),
         ]),
-        Spec(id: 104, titleKey: "login_password_template", symbol: "key", autofill: false, fields: [
+        Spec(id: 104, titleKey: "login_password_template", symbol: "key", autofill: true, fields: [
             ("login_field", .login, .username),
             ("password_field", .password, .currentPassword),
         ]),
@@ -112,7 +112,7 @@ public enum Templates {
             ("one_time_password_field", .oneTimePassword, .oneTimeCode),
             ("url_field", .website, .url),
         ]),
-        Spec(id: 114, titleKey: "custom_template", symbol: nil, autofill: false, fields: []),
+        Spec(id: 114, titleKey: "custom_template", symbol: nil, autofill: true, fields: []),
     ]
 
     /// 按稳定编号查找内置模板。

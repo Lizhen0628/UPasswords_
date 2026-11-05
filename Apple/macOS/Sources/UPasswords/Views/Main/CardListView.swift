@@ -8,25 +8,34 @@ import UPasswordsCore
 struct CardListView: View {
     @EnvironmentObject var ctx: AppContext
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject private var searchResults: AppContext.SearchState.Results
 
     var body: some View {
-        list
+        let visibleCards = cards
+        return list(visibleCards)
             .background(Color.appBackground)
             .overlay {
-                if cards.isEmpty {
+                if visibleCards.isEmpty {
                     emptyState
                 }
             }
     }
 
     private var cards: [Card] {
-        ctx.cards(for: ctx.selection, search: ctx.searchQuery)
+        ctx.cards(for: ctx.selection, search: searchResults.query)
     }
 
-    private var list: some View {
-        List(selection: $ctx.selectedCardId) {
+    private func list(_ cards: [Card]) -> some View {
+        let previewWord = searchResults.query
+            .split(separator: " ")
+            .first
+            .map(String.init)
+
+        return List(selection: $ctx.selectedCardId) {
             ForEach(cards) { card in
-                CardListCellView(card: card, preview: ctx.searchQuery.isEmpty ? nil : ctx.searchPreview(for: card, word: String(ctx.searchQuery.lowercased().split(separator: " ").first ?? "")))
+                CardListCellView(
+                    card: card,
+                    preview: previewWord.flatMap { ctx.searchPreview(for: card, word: $0) })
                     .tag(card.id)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .frame(height: 50)
@@ -56,7 +65,6 @@ struct CardListView: View {
         Button(L10n.t("add_note_command")) { ctx.activeSheet = .addNote }
         Button(L10n.t("add_template_command")) { ctx.activeSheet = .addCard }
         Divider()
-        Button(L10n.t("edit_command")) { ctx.editDraft = EditCardModel(card: card) }
         // 回收站内的「删除」必须是彻底删除——对已入回收站的项再执行 trashCard
         // 是无效操作(表现为"删不掉");列表与详情页语义保持一致
         if card.trashed {

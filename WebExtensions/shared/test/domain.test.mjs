@@ -80,6 +80,8 @@ test('isRequestMessage accepts only tagged shapes', () => {
     assert.equal(isRequestMessage('ping'), false)
     assert.equal(isRequestMessage({}), false)
     assert.equal(isRequestMessage({ type: 'site-hint' }), true)
+    assert.equal(isRequestMessage({ type: 'site-candidates' }), true)
+    assert.equal(isRequestMessage({ type: 'select-site-item', itemID: 'item-id' }), true)
     assert.equal(isRequestMessage({ type: 'open-vault' }), true)
     assert.equal(isRequestMessage({ type: 'vault-opened' }), false)
     assert.equal(isRequestMessage({ type: 'vault-session', action: 'replace' }), true)
@@ -129,8 +131,8 @@ test('Contracts: extension message schema covers all request/response tags', () 
     )
     const tag = (branch) => branch.properties.type.const
     const [request, response] = schema.oneOf
-    assert.deepEqual(request.oneOf.map(tag).sort(), ['active-location', 'fill', 'location', 'open-vault', 'ping', 'query', 'registration-check', 'site-hint', 'unlock', 'vault-session'])
-    assert.deepEqual(response.oneOf.map(tag).sort(), ['active-location', 'error', 'filled', 'items', 'locked', 'noVault', 'pong', 'site-hint', 'unlocked', 'vault-opened', 'vault-session'])
+    assert.deepEqual(request.oneOf.map(tag).sort(), ['active-location', 'fill', 'location', 'open-vault', 'ping', 'query', 'registration-check', 'select-site-item', 'site-candidates', 'site-hint', 'unlock', 'vault-session'])
+    assert.deepEqual(response.oneOf.map(tag).sort(), ['active-location', 'error', 'filled', 'items', 'locked', 'noVault', 'pong', 'site-candidates', 'site-fill-candidate', 'site-fill-rejected', 'site-hint', 'unlocked', 'vault-opened', 'vault-session'])
 })
 
 test('Contracts: raw XML is trusted-session only and fills require an origin', () => {
@@ -150,6 +152,9 @@ test('Contracts: raw XML is trusted-session only and fills require an origin', (
     const hint = schema.oneOf[1].oneOf.find((branch) => branch.properties.type.const === 'site-hint')
     assert.deepEqual(Object.keys(hint.properties).sort(), ['count', 'profileAvailable', 'type', 'unlocked'])
     assert.equal(hint.additionalProperties, false)
+    const candidates = schema.oneOf[1].oneOf.find((branch) => branch.properties.type.const === 'site-candidates')
+    assert.deepEqual(Object.keys(candidates.properties.candidates.items.properties).sort(), ['id', 'title', 'username'])
+    assert.equal(candidates.properties.candidates.items.properties.password, undefined)
 })
 
 test('Contracts: all four browser manifests agree on shared entry points', () => {

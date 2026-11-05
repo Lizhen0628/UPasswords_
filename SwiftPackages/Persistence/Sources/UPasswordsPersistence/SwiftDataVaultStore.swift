@@ -275,7 +275,8 @@ public final class SwiftDataVaultStore {
     /// Loads and decrypts the local row tables using the supplied master password.
     public func loadUnlocked(
         name: String,
-        password: String
+        password: String,
+        hydrateAttachments: Bool = true
     ) throws -> (PasswordDatabase, SymmetricKey) {
         guard let vault = try fetchVault(name: name) else {
             throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
@@ -300,8 +301,64 @@ public final class SwiftDataVaultStore {
             }
             apply(item, to: &database)
         }
-        try hydrateAttachmentContent(in: &database, vaultID: vault.vaultID, key: key)
+        if hydrateAttachments {
+            try hydrateAttachmentContent(in: &database, vaultID: vault.vaultID, key: key)
+        }
         return (database, key)
+    }
+
+    /// Returns cached attachment byte counts without loading their ciphertext into memory.
+    public func cachedAttachmentBytes(
+        vaultName: String
+    ) throws -> [AttachmentDownloadLedger.Version: Int] {
+        guard let vault = try fetchVault(name: vaultName) else {
+            throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+        }
+        let contentKeys = try fetchCachedContentKeys(vaultID: vault.vaultID)
+        var result: [AttachmentDownloadLedger.Version: Int] = [:]
+        for attachment in try fetchAttachments(vaultID: vault.vaultID)
+        where contentKeys.contains(attachment.attachmentKey) {
+            guard let cardID = UUID(uuidString: attachment.cardUUID),
+                  let attachmentID = UUID(uuidString: attachment.attachUUID),
+                  let contentVersion = UUID(uuidString: attachment.contentVersion),
+                  attachment.bytes >= 0, attachment.bytes <= Int64(Int.max) else { continue }
+            let version = AttachmentDownloadLedger.Version(
+                cardID: cardID,
+                attachmentID: attachmentID,
+                contentVersion: contentVersion
+            )
+            result[version] = Int(attachment.bytes)
+        }
+        return result
+    }
+
+    /// Decrypts one cached attachment version without hydrating other attachments.
+    public func loadAttachmentContent(
+        vaultName: String,
+        cardID: UUID,
+        attachmentID: UUID,
+        contentVersion: UUID,
+        vaultKey: SymmetricKey
+    ) throws -> Data? {
+        guard let vault = try fetchVault(name: vaultName) else {
+            throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+        }
+        let key = encryptedContentKey(
+            vaultID: vault.vaultID,
+            attachmentID: attachmentID,
+            contentVersion: contentVersion
+        )
+        guard let record = try fetchAttachments(vaultID: vault.vaultID).first(where: {
+            $0.attachmentKey == key
+                && $0.cardUUID.caseInsensitiveCompare(cardID.uuidString) == .orderedSame
+        }), let content = try fetchContent(contentKey: key) else { return nil }
+        return try AttachmentSyncCipher.decrypt(
+            cipher: content.cipher,
+            dekWrapped: record.dekWrapped,
+            key: RowSyncKey(raw: vaultKey.withUnsafeBytes { Data($0) }),
+            attachmentID: attachmentID,
+            contentVersion: contentVersion
+        )
     }
 
     /// Replaces one local vault in a single SwiftData transaction.
@@ -613,6 +670,20 @@ public final class SwiftDataVaultStore {
 
     private func fetchProfiles(vaultID: String) throws -> [LocalVaultProfileRecord] {
         try context.fetch(FetchDescriptor<LocalVaultProfileRecord>(predicate: #Predicate { $0.vaultID == vaultID }))
+    }
+
+    private func fetchCachedContentKeys(vaultID: String) throws -> Set<String> {
+        var descriptor = FetchDescriptor<LocalAttachmentContentRecord>(
+            predicate: #Predicate { $0.vaultID == vaultID }
+        )
+        descriptor.propertiesToFetch = [\.contentKey]
+        return Set(try context.fetch(descriptor).map(\.contentKey))
+    }
+
+    private func fetchContent(contentKey: String) throws -> LocalAttachmentContentRecord? {
+        try context.fetch(FetchDescriptor<LocalAttachmentContentRecord>(
+            predicate: #Predicate { $0.contentKey == contentKey }
+        )).first
     }
 
     private func migrateProfileRows() throws {

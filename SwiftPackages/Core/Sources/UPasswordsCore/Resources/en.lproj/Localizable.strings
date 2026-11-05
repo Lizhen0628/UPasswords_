@@ -98,6 +98,11 @@
 "cloud_restore_password_hint" = "The cloud database is encrypted with the master password set on the device that created it.";
 "cloud_restore_empty_hint" = "No vaults under this account yet. Create a new one below, or import a .upw file pair from another device.";
 "cloud_restore_loading_hint" = "Loading vaults from your account…";
+"cloud_restore_login_button" = "Verify email and find vaults";
+"cloud_restore_login_hint" = "Enter the email linked to your vaults. After you verify the code we send, you can choose a vault to restore.";
+"cloud_restore_change_account_button" = "Change account";
+"cloud_restore_list_failed_hint" = "Could not load vaults for this account. Check your connection and try again.";
+"cloud_restore_no_vaults_hint" = "This account has no vaults to restore. Go back to create a vault or restore from a local file.";
 "cloud_restore_server_list_hint" = "Vaults under your account are listed automatically. Restore needs the master password set on the device that created the vault.";
 "cloud_sync_task" = "Setup cloud synchronization";
 "cloud_sync_text" = "Your encrypted database syncs through the account relay. The server stores ciphertext and metadata only (zero knowledge).";
@@ -124,6 +129,7 @@
 "convertion_log_title" = "Conversion Log";
 "copy_as_text_command" = "Copy as Text";
 "copy_command" = "Copy";
+"copy_confirmation_text" = "Copied";
 "copy_text_button" = "Copy text";
 "crack_time_prompt" = "Crack time:";
 "crash_reporting_setting" = "Crash reporting";
@@ -143,6 +149,7 @@
 "database_info_button" = "Database info";
 "database_info_command" = "Database info";
 "database_location_text" = "For cloud sync to work correctly, select the same database location on all devices and computers. The location can be changed later.";
+"detail_field_value_help" = "Click to copy. Double-click to edit.";
 "database_name_error" = "Database name can only contain letters and digits.";
 "database_name_prompt" = "Database name:";
 "database_not_found_error" = "Database not found";
@@ -193,6 +200,7 @@
 "enter_verification_code_prompt" = "Enter 6-digit verification code:";
 "enter_your_email_prompt" = "Enter your email:";
 "erase_data_command" = "Erase Data";
+"snapshot_cleanup_failed" = "Could not erase extension snapshots. Check the app logs.";
 "erase_data_text" = "This will erase all application's data and settings from your Mac. This will not erase any data from the cloud.";
 "error_title" = "Error";
 "exclude_similar_characters_prompt" = "Exclude similar characters:";
@@ -255,6 +263,7 @@
 "invalid_value_text" = "Invalid value";
 "labels_prompt" = "Labels";
 "labels_text" = "Labels";
+"no_labels_text" = "No labels";
 "language_change_message" = "Language change will take effect at the next application start.";
 "language_prompt" = "Language:";
 "last_4_symbols_prompt" = "Last 4 password symbols:";
@@ -274,13 +283,13 @@
 "load_database_command" = "Load Database";
 "local_database_exists_error" = "A local database with this name already exists";
 "local_files_unreadable_error" = "The selected files could not be read. Make sure they exist and are accessible.";
-"local_key_autofound_hint" = "A matching .upwkey was found next to the vault file.";
-"local_key_file_prompt" = "Key file:";
-"local_key_missing_hint" = "No matching .upwkey was found next to the vault file - choose the key file manually.";
-"local_pick_file_button" = "Choose File…";
-"local_pick_key_button" = "Choose Key File…";
-"local_restore_hint" = "Pick the pair copied from another device: <name>.upw (vault body) and its matching <name>.upwkey (key envelope). Restore uses the master password set when the vault was created.";
-"local_vault_file_prompt" = "Vault file:";
+"local_key_autofound_hint" = "The matching .upwkey key file was found automatically.";
+"local_key_file_prompt" = "Key file (.upwkey):";
+"local_key_missing_hint" = "No matching .upwkey was found next to the selected .upw vault file. Choose the paired .upwkey file manually.";
+"local_pick_file_button" = "Choose .upw File…";
+"local_pick_key_button" = "Choose .upwkey File…";
+"local_restore_hint" = "Choose the password vault file ending in .upw. Its matching .upwkey key file is required and is found automatically when stored beside it. If it is elsewhere, choose the paired .upwkey file manually. Enter the vault's master password to restore.";
+"local_vault_file_prompt" = "Vault file (.upw):";
 "locally_and_in_cloud_button" = "Locally and in cloud";
 "locally_button" = "Locally";
 "logs_location_setting" = "Logs location:";
@@ -477,6 +486,8 @@
 "size_asc_text" = "Size ↑";
 "size_desc_text" = "Size ↓";
 "size_prompt" = "Size:";
+"sort_ascending" = "Ascending";
+"sort_descending" = "Descending";
 "sorting_button" = "Sorting";
 "sorting_command" = "Sorting";
 "sorting_text" = "Select how to sort cards:";
@@ -514,6 +525,7 @@
 "tools_menu" = "Tools";
 "totp_empty_state" = "There will be web accounts with one-time passwords to generate authentication codes.";
 "touch_id_button" = "Login with Touch ID";
+"autofill_touch_id_unlock_button" = "Unlock with Touch ID";
 "touch_id_unlock_reason" = "Use Touch ID to unlock your database";
 "touch_id_not_set_hint" = "Touch ID unlock is not set up yet. Enable it in Preferences or Setup.";
 "touch_id_login_query" = "Enable login with Touch ID?";
@@ -553,6 +565,8 @@
 "weak_passwords_empty_state" = "Congratulations! Your passwords are great.";
 "weak_passwords_title" = "Weak Passwords";
 "webdav_1012_error" = "Failed to establish a secure connection. The server's security certificate is invalid.";
+"website_asc_text" = "Website ↑";
+"website_desc_text" = "Website ↓";
 "website_text" = "Website";
 "whats_new_title" = "What's New";
 "whete_to_delete_database_query" = "Where to delete the database?";
@@ -592,7 +606,7 @@
 "whats_new_import_text" = "18 import formats (Chrome/Bitwarden/LastPass/…)";
 "whats_new_strength_text" = "Password strength & compromised checks (k-anonymity)";
 "premium_note" = "Premium is informational only — no App Store integration.";
-"autofill_note" = "macOS autofill requires a Credential Provider extension; passwords can be copied from any field instead.";
+"autofill_note" = "System AutoFill is available after enabling UPasswords in System Settings > Passwords > Password Options.";
 
 /* Card icon picker (website favicon / built-in brands / custom upload) */
 "icon_fetch_button" = "Fetch Website Icon";
@@ -1275,3 +1289,12 @@
 "backup_issue_attachment_identity_fmt" = "An attachment on card %@ has no stable identity.";
 "backup_issue_attachment_version_fmt" = "Attachment %@ version %@ is missing or invalid.";
 "backup_issue_candidate_unavailable_fmt" = "Conflict %@ candidate %@ is missing or invalid.";
+"site_match_label" = "Website match";
+"site_match_help" = "Choose when this website field can offer autofill.";
+"site_match_domain" = "Base domain";
+"site_match_host" = "Host";
+"site_match_starts_with" = "Starts with";
+"site_match_exact" = "Exact URL";
+"site_match_regex" = "Regular expression";
+"site_match_never" = "Never";
+"site_match_wildcard" = "Wildcard (legacy)";

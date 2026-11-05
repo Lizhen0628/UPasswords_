@@ -237,14 +237,30 @@ enum IconService {
 
     // MARK: - 展示缓存
 
-    private static let imageCache = NSCache<NSString, NSImage>()
+    private static let maxCachedImageCount = 128
+    private static let maxCachedImageCost = 8 * 1024 * 1024
+    private static let bytesPerPixel = 4
+
+    private static let imageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = maxCachedImageCount
+        cache.totalCostLimit = maxCachedImageCost
+        return cache
+    }()
 
     /// 展示用 NSImage 缓存：键为数据的 SHA-256 前缀（无敏感可逆映射）。
     static func cachedImage(forData data: Data) -> NSImage? {
         let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
         if let hit = imageCache.object(forKey: digest as NSString) { return hit }
         guard let img = NSImage(data: data) else { return nil }
-        imageCache.setObject(img, forKey: digest as NSString)
+        let cost = img.representations.reduce(into: 0) { total, representation in
+            let (pixels, pixelOverflow) = representation.pixelsWide
+                .multipliedReportingOverflow(by: representation.pixelsHigh)
+            let (bytes, byteOverflow) = pixels.multipliedReportingOverflow(by: Self.bytesPerPixel)
+            let (sum, sumOverflow) = total.addingReportingOverflow(bytes)
+            total = pixelOverflow || byteOverflow || sumOverflow ? Int.max : sum
+        }
+        imageCache.setObject(img, forKey: digest as NSString, cost: cost)
         return img
     }
 }

@@ -7,7 +7,13 @@ import UPasswordsPersistence
 /// 推送的始终是密文(.upw 容器),隐私红线不破;未配置 App Group
 /// entitlement 的本地构建静默跳过(扩展回退直读活库文件,见 handler)。
 enum SafariSnapshotBridge {
-    private static let appGroup = "group.com.upasswords.shared"
+    private static let appGroup = "2CV6VKVD26.com.upasswords.shared"
+    private static let credentialProviderDirectory = "CredentialProvider"
+    private static let safariDirectory = "Safari"
+
+    enum CleanupError: Error {
+        case groupUnavailable
+    }
 
     /// 推送当前库快照 + current 活跃标记。失败只记日志,不打扰主流程。
     /// - Parameters:
@@ -15,10 +21,10 @@ enum SafariSnapshotBridge {
     ///   - store: 库文件存储(源文件本身即加密容器)
     static func push(databaseName name: String, store: DatabaseStore) {
         guard let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) else {
-            Log.debug("chrome", "safari snapshot skipped: app group unavailable")
+            Log.warn("chrome", "shared snapshot skipped: app group unavailable")
             return
         }
-        let dir = group.appendingPathComponent("Safari", isDirectory: true)
+        let dir = group.appendingPathComponent(safariDirectory, isDirectory: true)
         let source = store.url(for: name)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -29,9 +35,61 @@ enum SafariSnapshotBridge {
                 try envelope.write(to: dir.appendingPathComponent("\(name).upwkey"), options: .atomic)
             }
             try Data(name.utf8).write(to: dir.appendingPathComponent("current"), options: .atomic)
+
+            let credentialProviderRoot = group.appendingPathComponent(
+                credentialProviderDirectory, isDirectory: true)
+            let credentialProviderDatabases = credentialProviderRoot.appendingPathComponent(
+                "Databases", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: credentialProviderDatabases, withIntermediateDirectories: true)
+            try data.write(
+                to: credentialProviderDatabases.appendingPathComponent("\(name).upw"),
+                options: .atomic)
+            if let envelope = store.envelopeData(for: name) {
+                try envelope.write(
+                    to: credentialProviderDatabases.appendingPathComponent("\(name).upwkey"),
+                    options: .atomic)
+            }
+            try Data(name.utf8).write(
+                to: credentialProviderRoot.appendingPathComponent("current"), options: .atomic)
             Log.debug("chrome", "safari snapshot pushed: \(name) (\(data.count)B)")
         } catch {
             Log.warn("chrome", "safari snapshot push failed for \(name): \(error)")
         }
+    }
+
+    /// Removes both extension snapshots, attempting each even if one removal fails.
+    /// - Throws: An error if the shared group is unavailable or a snapshot cannot be removed.
+    static func removeSnapshots() throws {
+        guard let group = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroup) else {
+            throw CleanupError.groupUnavailable
+        }
+        try removeSnapshots(in: group)
+    }
+
+    /// Removes snapshot directories within an injected group root.
+    /// - Parameters:
+    ///   - group: Shared container root.
+    ///   - removeItem: File removal operation, injectable for error-path tests.
+    /// - Throws: The first removal error after attempting both directories.
+    static func removeSnapshots(
+        in group: URL,
+        removeItem: (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }
+    ) throws {
+        var firstError: Error?
+        for directory in [safariDirectory, credentialProviderDirectory] {
+            do {
+                try removeItem(group.appendingPathComponent(directory, isDirectory: true))
+            } catch let error as NSError where error.domain == NSCocoaErrorDomain
+                && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
+                continue
+            } catch {
+                Log.error("db", "shared snapshot removal failed for \(directory): \(error)")
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError { throw firstError }
+        Log.info("db", "shared extension snapshots removed")
     }
 }

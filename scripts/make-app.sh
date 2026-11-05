@@ -11,20 +11,31 @@ APP_PKG="Apple/macOS"
 echo "==> swift build -c $CONFIG ($APP_PKG)"
 (cd "$APP_PKG" && swift build -c "$CONFIG")
 
+# Credential Provider is an Xcode application extension and must be built with
+# the macOS app target so it can be embedded in the distributable app bundle.
+MACOS_DERIVED="${TMPDIR:-/tmp}/UPasswordsMacOSDerived"
+XCODE_CONFIGURATION="Release"
+if [ "$CONFIG" = "debug" ]; then XCODE_CONFIGURATION="Debug"; fi
+echo "==> xcodebuild $XCODE_CONFIGURATION (macOS app + Credential Provider)"
+xcodebuild -quiet -allowProvisioningUpdates \
+  -workspace UPasswords.xcworkspace -scheme UPasswords-macOS \
+  -configuration "$XCODE_CONFIGURATION" -derivedDataPath "$MACOS_DERIVED" clean build
+
 # Safari 扩展独立容器 App(不依赖桌面完整版):扩展数据通路在 JS 内直连
 # relay API,容器仅承载 appex。失败仅告警(主 App 打包不受影响)。
 # -allowProvisioningUpdates:让已登录 Apple ID 的机器自动补描述文件;
 # CI 无账号时照样失败走告警路径。
 echo "==> xcodebuild Release (standalone Safari container)"
-if ! xcodebuild -quiet -allowProvisioningUpdates \
+SAFARI_DERIVED="${TMPDIR:-/tmp}/UPasswordsSafariDerived"
+SAFARI_APP=""
+if xcodebuild -quiet -allowProvisioningUpdates \
       -workspace UPasswords.xcworkspace -scheme UPasswordsSafari \
-      -configuration Release build 2>/dev/null; then
+      -configuration Release -derivedDataPath "$SAFARI_DERIVED" build 2>/dev/null; then
+  SAFARI_APP="$SAFARI_DERIVED/Build/Products/Release/UPasswordsSafari.app"
+else
   echo "    WARNING: standalone Safari app build failed — skipping it"
 fi
-# ls 在无匹配时非零退出,pipefail 会把它升级成整脚本失败(set -e),
-# 吞掉 ls 的退出码——找不到就当没有,继续打主 App。
-SAFARI_APP="$(ls -dt "$HOME/Library/Developer/Xcode/DerivedData/UPasswords-"*/Build/Products/Release/UPasswordsSafari.app 2>/dev/null | head -1 || true)"
-if [ -n "$SAFARI_APP" ]; then
+if [ -n "$SAFARI_APP" ] && [ -d "$SAFARI_APP" ]; then
   DEST="$OUT_DIR/UPasswords for Safari.app"
   rm -rf "$DEST"
   cp -R "$SAFARI_APP" "$DEST"
@@ -93,6 +104,17 @@ PLIST
 if [ -f "$APP_PKG/Resources/AppIcon.icns" ]; then
   cp "$APP_PKG/Resources/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
 fi
+# The SPM executable above is retained for the local distribution layout;
+# embed the Xcode-built Credential Provider into that same app bundle.
+XCODE_APP="$MACOS_DERIVED/Build/Products/$XCODE_CONFIGURATION/UPasswords.app"
+XCODE_CREDENTIAL_PROVIDER="$XCODE_APP/Contents/PlugIns/UPasswordsCredentialProvider.appex"
+if [ -d "$XCODE_CREDENTIAL_PROVIDER" ]; then
+  mkdir -p "$CONTENTS/PlugIns"
+  cp -R "$XCODE_CREDENTIAL_PROVIDER" "$CONTENTS/PlugIns/"
+else
+  echo "ERROR: Credential Provider extension was not produced" >&2
+  exit 1
+fi
 # 菜单栏三钥匙 template 图随 SPM 资源打入 UPasswords_UPasswords.bundle(见上),
 # 由 StatusItemController 经 AppResources.bundle 加载。
 
@@ -104,24 +126,18 @@ fi
 # 「其他 App 的数据」,不带该授权时 SafariSnapshotBridge 每次推送快照都会弹窗。
 # 注意:不加 --deep——appex 的 sandbox/app-group entitlements 必须保持
 # xcodebuild 给它的独立签名,父包的 entitlements 覆盖上去会毁掉沙盒配置。
-echo "==> codesign"
-# grep 无匹配时非零退出,pipefail 会升级成整脚本失败;吞掉让空串走 ad-hoc 回退。
-IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 'Apple Development' | sed -E 's/.*"([^"]+)".*/\1/' || true)"
-SIGN_ID="${IDENTITY:--}"
-# 签名顺序自内向外:SPM 资源 bundle 无签名须先逐个签掉;appex 保留 xcodebuild
-# 的独立签名不动;最后签父包。全程不用 --deep——它会用父包 entitlements
-# 覆盖 appex 的 sandbox/app-group,导致 Safari 拒绝托管扩展。
-for bundle in "$CONTENTS/MacOS/"*.bundle; do
-  [ -d "$bundle" ] || continue
-  codesign --force --sign "$SIGN_ID" "$bundle"
-done
-ENTITLEMENTS="Apple/macOS/UPasswords-dist.entitlements"
-codesign --force --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
-if [ -n "$IDENTITY" ]; then
-  echo "    signed with development identity: $IDENTITY"
-else
-  echo "    signed ad-hoc (no development identity found on this machine)"
+XCODE_CONFIGURATION="Release"
+if [ "$CONFIG" = "debug" ]; then XCODE_CONFIGURATION="Debug"; fi
+XCODE_APP="$MACOS_DERIVED/Build/Products/$XCODE_CONFIGURATION/UPasswords.app"
+if [ ! -d "$XCODE_APP/Contents/PlugIns/UPasswordsCredentialProvider.appex" ]; then
+  echo "ERROR: signed Credential Provider app was not produced" >&2
+  exit 1
 fi
+echo "==> preserving Xcode app signature and AutoFill entitlements"
+rm -rf "$APP"
+cp -R "$XCODE_APP" "$APP"
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+codesign --verify --deep --strict "$APP"
 
 echo "==> $APP"
 du -sh "$APP"
@@ -145,11 +161,44 @@ fi
 
 # 扩展注册锚定到成品包位置(独立容器 App);DerivedData 注册易被 clean 清掉。
 if [ -n "$SAFARI_APP" ] && [ -d "$OUT_DIR/UPasswords for Safari.app" ]; then
-  pluginkit -r "$SAFARI_APP" 2>/dev/null || true
+  BUILT_SAFARI_EXTENSION="$SAFARI_APP/Contents/PlugIns/UPasswordsSafariWebExtension.appex"
+  PACKAGED_SAFARI_EXTENSION="$OUT_DIR/UPasswords for Safari.app/Contents/PlugIns/UPasswordsSafariWebExtension.appex"
+  REGISTRATION_SAFARI_EXTENSION="$PACKAGED_SAFARI_EXTENSION"
+  pluginkit -r "$BUILT_SAFARI_EXTENSION" 2>/dev/null || true
+  pluginkit -r "$PACKAGED_SAFARI_EXTENSION" 2>/dev/null || true
   if [ -d "/Applications/UPasswords for Safari.app" ]; then
-    pluginkit -a "/Applications/UPasswords for Safari.app" 2>/dev/null || true
-  else
-    pluginkit -a "$OUT_DIR/UPasswords for Safari.app" 2>/dev/null || true
+    REGISTRATION_SAFARI_EXTENSION="/Applications/UPasswords for Safari.app/Contents/PlugIns/UPasswordsSafariWebExtension.appex"
   fi
-  echo "==> extension registration anchored to standalone app"
+fi
+
+# Credential Provider is embedded in the main app and should remain registered
+# against the stable installed copy when one exists.
+if [ -d "$OUT_DIR/UPasswords.app/Contents/PlugIns/UPasswordsCredentialProvider.appex" ]; then
+  BUILT_CREDENTIAL_PROVIDER="$OUT_DIR/UPasswords.app/Contents/PlugIns/UPasswordsCredentialProvider.appex"
+  XCODE_CONFIGURATION="Release"
+  if [ "$CONFIG" = "debug" ]; then XCODE_CONFIGURATION="Debug"; fi
+  XCODE_CREDENTIAL_PROVIDER="$MACOS_DERIVED/Build/Products/$XCODE_CONFIGURATION/UPasswords.app/Contents/PlugIns/UPasswordsCredentialProvider.appex"
+  CREDENTIAL_PROVIDER="$BUILT_CREDENTIAL_PROVIDER"
+  if [ -d "/Applications/UPasswords.app" ]; then
+    CREDENTIAL_PROVIDER="/Applications/UPasswords.app/Contents/PlugIns/UPasswordsCredentialProvider.appex"
+  fi
+  pluginkit -r "$XCODE_CREDENTIAL_PROVIDER" 2>/dev/null || true
+  pluginkit -r "$BUILT_CREDENTIAL_PROVIDER" 2>/dev/null || true
+  if [ "$CREDENTIAL_PROVIDER" != "$BUILT_CREDENTIAL_PROVIDER" ]; then
+    pluginkit -r "$CREDENTIAL_PROVIDER" 2>/dev/null || true
+  fi
+  pluginkit -a "$CREDENTIAL_PROVIDER"
+  echo "==> Credential Provider registered"
+fi
+
+if [ -n "${REGISTRATION_SAFARI_EXTENSION:-}" ] && [ -d "$REGISTRATION_SAFARI_EXTENSION" ]; then
+  /usr/bin/pluginkit -a -v "$REGISTRATION_SAFARI_EXTENSION"
+  SAFARI_REGISTRATIONS=$(
+    /usr/bin/pluginkit -m -A -D -v -i com.upasswords.UPasswords.Safari.Extension 2>/dev/null || true
+  )
+  if [[ "$SAFARI_REGISTRATIONS" == *"$REGISTRATION_SAFARI_EXTENSION"* ]]; then
+    echo "==> Safari extension registered at stable app path"
+  else
+    echo "    WARNING: Safari extension registration was not confirmed"
+  fi
 fi

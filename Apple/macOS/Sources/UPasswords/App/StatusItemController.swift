@@ -5,6 +5,8 @@ import UPasswordsCore
 @MainActor
 final class StatusItemController: NSObject {
     private var statusItem: NSStatusItem?
+    private static let keyWindowWaitAttempts = 60
+    private static let keyWindowWaitInterval: Duration = .milliseconds(50)
 
     /// 无状态构造,允许在 AppDelegate 的非隔离 init 中创建。
     nonisolated override init() {}
@@ -92,9 +94,29 @@ final class StatusItemController: NSObject {
         }
     }
 
+    static func requestTouchIDUnlockAfterActivation() {
+        Task { @MainActor in
+            let context = AppContext.shared
+            guard context.phase == .locked else { return }
+
+            for _ in 0..<Self.keyWindowWaitAttempts {
+                guard !Task.isCancelled else { return }
+                if NSApp.isActive, NSApp.keyWindow?.isVisible == true {
+                    Log.info("keychain", "Touch ID activation reached the visible key window")
+                    context.unlockWithTouchID()
+                    return
+                }
+                try? await Task.sleep(for: Self.keyWindowWaitInterval)
+            }
+
+            Log.warn("keychain", "Touch ID activation skipped: no active key window")
+        }
+    }
+
     @objc private func showMainWindowAction() {
         Log.info("ui", "status menu: show main window")
         Self.showMainWindow()
+        Self.requestTouchIDUnlockAfterActivation()
     }
 
     @objc private func lockNow() {

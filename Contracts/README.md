@@ -105,7 +105,7 @@ macOS/iOS 与四种浏览器扩展均可查看并选择完整候选；候选均�
 
 明文 XML 与服务端 revision 只在可信 popup 解密和处理，用于保留未知数据与执行联网 CAS 编辑。编辑继续要求重新认证且联网，版本冲突时拒绝覆盖。手动同步不再要求重复输入主密码。首次全量同步，以及 `cursorExpired` 或 rekey 后重建快照，是需要全量处理的例外；同步将密文、信封与游标按本地事务一致更新。
 
-`site-hint` 由后台按发送页和当前页的同源校验计算，仅返回匹配数量与解锁状态；`open-vault` 请求打开插件弹窗，不自动填充。只有显式选择、匹配当前网站的条目才可填充，填充负载排除原始 XML、笔记与无关字段，内容脚本还校验自身插件弹窗来源及 `expectedOrigin`。
+`site-hint` 由后台按发送页和当前页的同源校验计算，仅返回匹配数量与解锁状态。账号框获得焦点时，`site-candidates` 最多返回 8 个匹配条目的 ID、标题和用户名，不返回密码、备注或 XML；用户选中后，后台重新验证活动标签页、解锁会话、自动填充开关、冲突门控与网站匹配，再将单条用户名/密码通过该次扩展消息响应交给发起选择的内容脚本。内容脚本验证精确 `expectedOrigin` 并只填入当前可见登录字段，不自动提交；HTTP 页面须先经用户确认。密码仅在明确点击后跨入扩展隔离环境，不写入网页可读存储或日志。`open-vault` 请求打开插件弹窗，不自动填充。
 消息形状见 `extension-message.schema.json`，TypeScript 定义见 `WebExtensions/shared/src/messaging/protocol.ts`。
 
 个人资料独立于 cards：本地加密库中的 userProfiles 集合以 user_profile XML 元素序列化，并参与备份、恢复和改密。行级同步使用 kind=1（card）、kind=2（label）、kind=3（user profile）。Go API 将 kind=3 的客户端密文保存于 vault_user_profiles，通过 vault_sync_items 视图统一处理快照、增量、配额和 rekey；姓名、电话、地址等值不成为 SQL 明文列。

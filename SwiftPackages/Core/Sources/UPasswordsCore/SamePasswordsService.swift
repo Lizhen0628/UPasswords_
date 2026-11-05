@@ -13,4 +13,15 @@ public enum SamePasswordsService {
         }
         return out.filter { $0.value.count > 1 }
     }
+
+    /// Card identities that occur in repeated-password groups.
+    ///
+    /// The result contains no password values and can be retained for UI lookup.
+    public static func cardIDsWithReusedPasswords(cards: [Card]) -> Set<UUID> {
+        var cardIDs = Set<UUID>()
+        for ids in groups(cards: cards).values {
+            cardIDs.formUnion(ids)
+        }
+        return cardIDs
+    }
 }

@@ -354,6 +354,15 @@ struct CardEditView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(L10n.t("ios_delete_field_button"))
             }
+            if fieldValue.type == .website {
+                Picker(L10n.t("site_match_label"), selection: field.siteMatch) {
+                    ForEach(SiteMatchMode.allCases) { mode in
+                        Text(mode.localizedName).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityHint(L10n.t("site_match_help", fallback: "选择此网站字段提供自动填充的规则。"))
+            }
             valueInput(field: field)
         }
         .padding(.vertical, 2)
@@ -383,7 +392,8 @@ struct CardEditView: View {
                 .buttonStyle(.plain)
             } else {
                 TextField(f.type.valuePlaceholder, text: field.value)
-                    .keyboardType(keyboard(for: f.type))
+                    .keyboardType(f.type == .website && f.siteMatch == .regex
+                        ? .default : keyboard(for: f.type))
                     .textContentType(.none)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)

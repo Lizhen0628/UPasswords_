@@ -101,6 +101,8 @@ enum SidebarSelection: Hashable {
 enum Sorting: String, CaseIterable, Identifiable {
     case titleAsc = "title_asc"
     case titleDesc = "title_desc"
+    case websiteAsc = "website_asc"
+    case websiteDesc = "website_desc"
     case createdAsc = "created_asc"
     case createdDesc = "created_desc"
     case modifiedAsc = "modified_asc"
@@ -116,6 +118,10 @@ enum Sorting: String, CaseIterable, Identifiable {
         switch self {
         case .titleAsc: out.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         case .titleDesc: out.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedDescending }
+        case .websiteAsc:
+            out.sort { websiteValue(for: $0).localizedCaseInsensitiveCompare(websiteValue(for: $1)) == .orderedAscending }
+        case .websiteDesc:
+            out.sort { websiteValue(for: $0).localizedCaseInsensitiveCompare(websiteValue(for: $1)) == .orderedDescending }
         case .createdAsc: out.sort { $0.created < $1.created }
         case .createdDesc: out.sort { $0.created > $1.created }
         case .modifiedAsc: out.sort { $0.modified < $1.modified }
@@ -127,6 +133,10 @@ enum Sorting: String, CaseIterable, Identifiable {
             out.sort { $0.favorite && !$1.favorite }
         }
         return out
+    }
+
+    private func websiteValue(for card: Card) -> String {
+        card.fields.first { $0.type == .website }?.value ?? ""
     }
 }
 

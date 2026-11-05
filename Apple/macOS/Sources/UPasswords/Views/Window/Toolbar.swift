@@ -15,6 +15,7 @@ import UPasswordsCore
 struct MainToolbarView: View {
     @EnvironmentObject var ctx: AppContext
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject private var searchResults: AppContext.SearchState.Results
 
     @State private var fallbackToggleHovering = false
 
@@ -27,7 +28,6 @@ struct MainToolbarView: View {
         [.aboveAll, .preferences],
     ]
     private static let groupGap: CGFloat = 8
-    private static let searchWidth: CGFloat = 150
 
     var body: some View {
         // 侧栏隐藏时内容列从窗口左缘开始,需先让开红绿灯区(邮件式:灯后跟开关)
@@ -73,6 +73,8 @@ struct MainToolbarView: View {
                             if i > 0 { groupDivider }
                             if spec.labelKey == "add_button" {
                                 AddMenuButton()
+                            } else if spec.labelKey == "sorting_button" {
+                                SortingMenuButton(settings: settings)
                             } else {
                                 ToolbarButton(spec: spec, ctx: ctx)
                             }
@@ -100,30 +102,49 @@ struct MainToolbarView: View {
     }
 
     /// 副标题:当前选择 + 搜索过滤后的条数(同邮件「过滤条件: 未读 (n 封邮件)」)。
-    /// 用防抖后的 searchQuery(逐键 searchText 不重算,也不为计数付出排序开销)。
+    /// 用防抖后的 query,逐键输入不触发计数过滤。
     private var subtitle: String {
-        let count = ctx.count(for: ctx.selection, search: ctx.searchQuery)
+        let count = ctx.count(for: ctx.selection, search: searchResults.query)
         return String.localizedStringWithFormat(L10n.t("items_count_text"), count)
     }
 
     // MARK: 右区:邮件式搜索框
 
     private var searchField: some View {
+        SearchFieldView(
+            input: ctx.searchState.input,
+            onTextChanged: ctx.setSearchText,
+            onClear: ctx.clearSearch)
+    }
+
+    /// 组内按钮间的发丝竖线(邮件回复/转发组分隔样式)。
+    private var groupDivider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.10))
+            .frame(width: 1, height: 16)
+    }
+}
+
+@MainActor
+private struct SearchFieldView: View {
+    @ObservedObject var input: AppContext.SearchState.Input
+    let onTextChanged: (String) -> Void
+    let onClear: () -> Void
+
+    var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(Color.white.opacity(0.45))
             TextField(L10n.t("search_text"), text: Binding(
-                get: { ctx.searchText },
-                set: { ctx.setSearchText($0) }
+                get: { input.text },
+                set: { onTextChanged($0) }
             ))
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(.white)
-            if !ctx.searchText.isEmpty {
-                Button {
-                    ctx.clearSearch()
-                } label: {
+            if !input.text.isEmpty {
+                Button(action: onClear) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(Color.white.opacity(0.45))
@@ -132,16 +153,9 @@ struct MainToolbarView: View {
             }
         }
         .padding(.horizontal, 8)
-        .frame(width: Self.searchWidth, height: 26)
+        .frame(width: 150, height: 26)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.055)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.07), lineWidth: 1))
-    }
-
-    /// 组内按钮间的发丝竖线(邮件回复/转发组分隔样式)。
-    private var groupDivider: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.10))
-            .frame(width: 1, height: 16)
     }
 }
 
@@ -314,5 +328,263 @@ struct ToolbarButton: View {
         if active { return .accentColor }
         if !enabled { return Color.white.opacity(0.28) }
         return Color.white.opacity(0.85)
+    }
+}
+
+/// Applies card sorting directly from the toolbar menu without a confirmation sheet.
+struct SortingMenuButton: View {
+    private static let favoritesLabelPunctuation = CharacterSet(charactersIn: ":： ")
+    private static let rowHeight: CGFloat = 26
+    private static let checkmarkSlotWidth: CGFloat = 16
+    private static let symbolSlotWidth: CGFloat = 16
+    private static let rowSpacing: CGFloat = 4
+    private static let rowHorizontalPadding: CGFloat = 4
+    private static let popoverPadding: CGFloat = 6
+
+    @ObservedObject var settings: AppSettings
+
+    @State private var hovering = false
+    @State private var isPresented = false
+    @State private var hoveredField: SortField?
+    @State private var hoveredDirection: SortDirection?
+    @State private var hoveringFavorites = false
+
+    private enum SortField: String, CaseIterable, Identifiable {
+        case title
+        case website
+        case created
+        case modified
+        case size
+
+        var id: String { rawValue }
+
+        var name: String {
+            switch self {
+            case .title: return L10n.t("title_hint")
+            case .website: return L10n.t("website_text")
+            case .created: return L10n.t("created_date_text")
+            case .modified: return L10n.t("modified_date_text")
+            case .size:
+                return L10n.t("size_prompt")
+                    .trimmingCharacters(in: Self.labelPunctuation)
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .title: return "textformat"
+            case .website: return "safari"
+            case .created: return "plus.circle"
+            case .modified: return "pencil"
+            case .size: return "externaldrive"
+            }
+        }
+
+        private static let labelPunctuation = CharacterSet(charactersIn: ":： ")
+    }
+
+    private enum SortDirection: String, CaseIterable, Identifiable {
+        case ascending
+        case descending
+
+        var id: String { rawValue }
+
+        var name: String {
+            switch self {
+            case .ascending: return L10n.t("sort_ascending")
+            case .descending: return L10n.t("sort_descending")
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .ascending: return "arrow.up"
+            case .descending: return "arrow.down"
+            }
+        }
+    }
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "arrow.up.arrow.down.square")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.85))
+                .frame(width: 30, height: 26)
+                .contentShape(Rectangle())
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(hovering || isPresented ? Color.white.opacity(0.08) : Color.clear)
+                )
+                .padding(.horizontal, 1)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(L10n.t("sorting_command"))
+        .onHover { hovering = $0 }
+        .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            sortingPopover
+        }
+    }
+
+    private var sortingPopover: some View {
+        VStack(spacing: 2) {
+            ForEach(SortField.allCases) { field in
+                fieldRow(field)
+            }
+
+            Divider()
+                .padding(.vertical, 2)
+
+            ForEach(SortDirection.allCases) { direction in
+                directionRow(direction)
+            }
+
+            Divider()
+                .padding(.vertical, 2)
+
+            Button {
+                settings.favoritesAtTop.toggle()
+            } label: {
+                HStack(spacing: Self.rowSpacing) {
+                    checkmark(isSelected: settings.favoritesAtTop)
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(settings.favoritesAtTop ? Color.yellow : Color.secondary)
+                        .frame(width: Self.symbolSlotWidth)
+                        .accessibilityHidden(true)
+                    Text(favoritesLabel)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Self.rowHorizontalPadding)
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.rowHeight)
+                .contentShape(Rectangle())
+                .background(rowBackground(isHovered: hoveringFavorites))
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(settings.favoritesAtTop ? .isSelected : [])
+            .onHover { hoveringFavorites = $0 }
+        }
+        .padding(Self.popoverPadding)
+        .frame(width: popoverWidth)
+    }
+
+    private var popoverWidth: CGFloat {
+        let font = NSFont.systemFont(ofSize: 17)
+        let labels = SortField.allCases.map(\.name)
+            + SortDirection.allCases.map(\.name)
+            + [favoritesLabel]
+        let widestLabel = labels
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        let columnsWidth = Self.checkmarkSlotWidth + Self.symbolSlotWidth
+            + Self.rowSpacing * 2 + Self.rowHorizontalPadding * 2
+            + Self.popoverPadding * 2
+        return ceil(widestLabel + columnsWidth)
+    }
+
+    private var favoritesLabel: String {
+        L10n.t("favorites_at_top_setting")
+            .trimmingCharacters(in: Self.favoritesLabelPunctuation)
+    }
+
+    private var selectedField: SortField {
+        switch settings.sortingValue {
+        case .titleAsc, .titleDesc: return .title
+        case .websiteAsc, .websiteDesc: return .website
+        case .createdAsc, .createdDesc: return .created
+        case .modifiedAsc, .modifiedDesc: return .modified
+        case .sizeAsc, .sizeDesc: return .size
+        }
+    }
+
+    private var selectedDirection: SortDirection {
+        switch settings.sortingValue {
+        case .titleAsc, .websiteAsc, .createdAsc, .modifiedAsc, .sizeAsc: return .ascending
+        case .titleDesc, .websiteDesc, .createdDesc, .modifiedDesc, .sizeDesc: return .descending
+        }
+    }
+
+    private func fieldRow(_ field: SortField) -> some View {
+        let isSelected = selectedField == field
+        let isHovered = hoveredField == field
+
+        return Button {
+            settings.sortingValue = sorting(field: field, direction: selectedDirection)
+        } label: {
+            HStack(spacing: Self.rowSpacing) {
+                checkmark(isSelected: isSelected)
+                Image(systemName: field.systemImage)
+                    .frame(width: Self.symbolSlotWidth)
+                    .accessibilityHidden(true)
+                Text(field.name)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Self.rowHorizontalPadding)
+            .frame(height: Self.rowHeight)
+            .contentShape(Rectangle())
+            .background(rowBackground(isHovered: isHovered))
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveredField = $0 ? field : nil }
+    }
+
+    private func directionRow(_ direction: SortDirection) -> some View {
+        let isSelected = selectedDirection == direction
+        let isHovered = hoveredDirection == direction
+
+        return Button {
+            settings.sortingValue = sorting(field: selectedField, direction: direction)
+        } label: {
+            HStack(spacing: Self.rowSpacing) {
+                checkmark(isSelected: isSelected)
+                Image(systemName: direction.systemImage)
+                    .frame(width: Self.symbolSlotWidth)
+                    .accessibilityHidden(true)
+                Text(direction.name)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Self.rowHorizontalPadding)
+            .frame(height: Self.rowHeight)
+            .contentShape(Rectangle())
+            .background(rowBackground(isHovered: isHovered))
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveredDirection = $0 ? direction : nil }
+    }
+
+    private func checkmark(isSelected: Bool) -> some View {
+        Image(systemName: "checkmark")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isSelected ? Color.primary : Color.clear)
+            .frame(width: Self.checkmarkSlotWidth)
+            .accessibilityHidden(true)
+    }
+
+    private func sorting(field: SortField, direction: SortDirection) -> Sorting {
+        switch (field, direction) {
+        case (.title, .ascending): return .titleAsc
+        case (.title, .descending): return .titleDesc
+        case (.website, .ascending): return .websiteAsc
+        case (.website, .descending): return .websiteDesc
+        case (.created, .ascending): return .createdAsc
+        case (.created, .descending): return .createdDesc
+        case (.modified, .ascending): return .modifiedAsc
+        case (.modified, .descending): return .modifiedDesc
+        case (.size, .ascending): return .sizeAsc
+        case (.size, .descending): return .sizeDesc
+        }
+    }
+
+    private func rowBackground(isHovered: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
     }
 }

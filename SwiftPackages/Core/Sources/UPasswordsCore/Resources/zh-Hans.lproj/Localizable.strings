@@ -98,6 +98,11 @@
 "cloud_restore_password_hint" = "云端密码库用它加密——请输入创建该密码库时设置的主密码。";
 "cloud_restore_empty_hint" = "账户下还没有密码库。可在下方新建，或从其他设备导入 .upw 文件。";
 "cloud_restore_loading_hint" = "正在从账户获取密码库…";
+"cloud_restore_login_button" = "验证邮箱并查找密码库";
+"cloud_restore_login_hint" = "输入关联密码库的邮箱。验证收到的验证码后，即可选择要恢复的密码库。";
+"cloud_restore_change_account_button" = "更换账户";
+"cloud_restore_list_failed_hint" = "无法加载此账户的密码库，请检查网络连接后重试。";
+"cloud_restore_no_vaults_hint" = "此账户下没有可恢复的密码库。可返回新建密码库，或选择本地文件还原。";
 "cloud_restore_server_list_hint" = "已自动列出账户下的密码库；输入创建该库时设置的主密码即可还原。";
 "cloud_sync_task" = "设置云同步";
 "cloud_sync_text" = "加密的密码库经账户中继同步；服务器只保存密文与元数据（零知识）。";
@@ -124,6 +129,7 @@
 "convertion_log_title" = "规范日志";
 "copy_as_text_command" = "复制为文本";
 "copy_command" = "复制";
+"copy_confirmation_text" = "已拷贝";
 "copy_text_button" = "复制文字";
 "crack_time_prompt" = "破解所需时间：";
 "crash_reporting_setting" = "崩溃报告";
@@ -143,6 +149,7 @@
 "database_info_button" = "密码库信息";
 "database_info_command" = "密码库信息";
 "database_location_text" = "为确保云同步正常工作，请在所有设备和计算机上选择相同的密码库位置。 可以在稍后更改位置。";
+"detail_field_value_help" = "单击复制，双击编辑";
 "database_name_error" = "密码库名称只能包含字母和数字(建议以字母开头)";
 "database_name_prompt" = "密码库名称:";
 "database_not_found_error" = "无法找到密码库";
@@ -193,6 +200,7 @@
 "enter_verification_code_prompt" = "请输入6位验证码：";
 "enter_your_email_prompt" = "请输入你的邮箱:";
 "erase_data_command" = "擦除数据";
+"snapshot_cleanup_failed" = "无法清除扩展快照，请检查应用日志。";
 "erase_data_text" = "这将从您的电脑上删除所有应用程序数据和设置。但不会删除任何云端储存上的数据。";
 "error_title" = "错误";
 "exclude_similar_characters_prompt" = "排除相似字符：";
@@ -255,6 +263,7 @@
 "invalid_value_text" = "无效的值";
 "labels_prompt" = "标签";
 "labels_text" = "标签";
+"no_labels_text" = "无标签";
 "language_change_message" = "语言更改将在重新启动应用程序时生效。";
 "language_prompt" = "语言：";
 "last_4_symbols_prompt" = "密码后四位：";
@@ -274,13 +283,13 @@
 "load_database_command" = "加载密码库";
 "local_database_exists_error" = "本地已存在同名密码库";
 "local_files_unreadable_error" = "无法读取所选文件，请确认文件存在且可访问。";
-"local_key_autofound_hint" = "已自动找到密码库文件旁配套的同名 .upwkey。";
-"local_key_file_prompt" = "密钥文件：";
-"local_key_missing_hint" = "所选文件旁没有同名 .upwkey，请手动选择配套的密钥文件。";
-"local_pick_file_button" = "选择文件…";
-"local_pick_key_button" = "选择密钥文件…";
-"local_restore_hint" = "选择从其他设备拷来的一对文件：<名>.upw（密码库本体）与配套的 <名>.upwkey（密钥信封）。恢复使用创建该密码库时设置的主密码。";
-"local_vault_file_prompt" = "密码库文件：";
+"local_key_autofound_hint" = "已自动找到配套的 .upwkey 密钥文件。";
+"local_key_file_prompt" = "密钥文件（.upwkey）：";
+"local_key_missing_hint" = "所选 .upw 密码库文件旁没有配套的 .upwkey，请手动选择对应的 .upwkey 文件。";
+"local_pick_file_button" = "选择 .upw 文件…";
+"local_pick_key_button" = "选择 .upwkey 文件…";
+"local_restore_hint" = "请选择以 .upw 结尾的密码库文件。恢复还需要配套的 .upwkey 密钥文件；若它与 .upw 文件在同一目录下，应用会自动找到。若密钥文件在其他位置，请手动选择对应的 .upwkey。输入创建该密码库时设置的主密码即可恢复。";
+"local_vault_file_prompt" = "密码库文件（.upw）：";
 "locally_and_in_cloud_button" = "本地和云端";
 "locally_button" = "本地";
 "logs_location_setting" = "日志位置：";
@@ -477,6 +486,8 @@
 "size_asc_text" = "大小升序";
 "size_desc_text" = "大小降序";
 "size_prompt" = "大小:";
+"sort_ascending" = "升序";
+"sort_descending" = "降序";
 "sorting_button" = "排序";
 "sorting_command" = "排序";
 "sorting_text" = "选择排序方式:";
@@ -514,6 +525,7 @@
 "tools_menu" = "工具";
 "totp_empty_state" = "这里会显示带有一次性密码的网络账号，用于生成验证码。";
 "touch_id_button" = "使用 Touch ID 登录";
+"autofill_touch_id_unlock_button" = "使用 Touch ID 解锁";
 "touch_id_unlock_reason" = "使用 Touch ID 解锁密码库";
 "touch_id_not_set_hint" = "尚未启用 Touch ID 快速解锁：请在偏好设置或「初始化」中开启。";
 "touch_id_login_query" = "启用Touch ID登录吗？";
@@ -553,6 +565,8 @@
 "weak_passwords_empty_state" = "恭喜！您的密码都很安全。";
 "weak_passwords_title" = "弱密码";
 "webdav_1012_error" = "未能建立安全连接。服务器安全证书无效。";
+"website_asc_text" = "网址升序";
+"website_desc_text" = "网址降序";
 "website_text" = "网址";
 "whats_new_title" = "新增内容";
 "whete_to_delete_database_query" = "在哪里删除密码库？";
@@ -592,7 +606,7 @@
 "whats_new_import_text" = "18 种导入格式（Chrome/Bitwarden/LastPass/…）";
 "whats_new_strength_text" = "密码强度与泄露检查（k-匿名）";
 "premium_note" = "Premium 仅为功能说明展示，未接入应用商店。";
-"autofill_note" = "macOS 自动填充需要凭据提供者扩展，暂未包含；密码可从任意字段复制。";
+"autofill_note" = "在系统设置“密码”中的“密码选项”启用 UPasswords 后，即可使用系统级自动填充。";
 
 /* 卡片图标选择器（网站图标 / 内置品牌 / 自定义上传） */
 "icon_fetch_button" = "获取网站图标";
@@ -1275,3 +1289,12 @@
 "backup_issue_attachment_identity_fmt" = "条目 %@ 中有附件缺少稳定标识。";
 "backup_issue_attachment_version_fmt" = "附件 %@ 的版本 %@ 缺失或无效。";
 "backup_issue_candidate_unavailable_fmt" = "冲突 %@ 的候选 %@ 缺失或无效。";
+"site_match_label" = "网站匹配方式";
+"site_match_help" = "选择此网站字段何时可提供自动填充。";
+"site_match_domain" = "基础域名";
+"site_match_host" = "主机";
+"site_match_starts_with" = "开头是";
+"site_match_exact" = "精确网址";
+"site_match_regex" = "正则表达式";
+"site_match_never" = "从不";
+"site_match_wildcard" = "通配规则（兼容）";

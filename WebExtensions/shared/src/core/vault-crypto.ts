@@ -462,9 +462,9 @@ export function parseVaultXml(xml: string): ExtensionItem[] {
                 type: (FIELD_TYPES.has(type) ? type : "text") as ExtensionItem["fields"][number]["type"],
                 value: field.textContent ?? "",
                 autofill: (AUTOFILL_TOKENS.has(autofill) ? autofill : "off") as ExtensionItem["fields"][number]["autofill"],
-                ...(field.getAttribute("site-match") && ["domain", "wildcard", "exactURL"].includes(field.getAttribute("site-match") ?? "")
+                ...(field.getAttribute("site-match") && ["domain", "host", "startsWith", "exactURL", "regex", "never", "wildcard"].includes(field.getAttribute("site-match") ?? "")
                     ? { siteMatch: field.getAttribute("site-match") as ExtensionItem["fields"][number]["siteMatch"] } : {}),
-            ...(field.getAttribute("site-match") && ["domain", "wildcard", "exactURL"].includes(field.getAttribute("site-match") ?? "")
+            ...(field.getAttribute("site-match") && ["domain", "host", "startsWith", "exactURL", "regex", "never", "wildcard"].includes(field.getAttribute("site-match") ?? "")
                 ? { siteMatch: field.getAttribute("site-match") as ExtensionItem["fields"][number]["siteMatch"] } : {}),
             };
         });

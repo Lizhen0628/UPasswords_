@@ -13,8 +13,12 @@ import UPasswordsCore
 /// 解密结果只在 appex 进程内存中存活,进程回收即失效。
 final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
-    /// 与 iOS 同名的共享容器组(macOS 主 App 推送快照的目标)。
+    /// 当前平台上主 App 推送快照的共享容器组。
+    #if os(macOS)
+    private static let appGroup = "2CV6VKVD26.com.upasswords.shared"
+    #else
     private static let appGroup = "group.com.upasswords.shared"
+    #endif
 
     /// 诊断日志:直接落 App Group(bridge.log),不经 AppLog——appex 沙盒里
     /// Application Support 可能不可写/不可见,App Group 是双方共用的确定路径。

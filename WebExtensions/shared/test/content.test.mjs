@@ -7,7 +7,7 @@ const root = new URL("../../", import.meta.url);
 const variants = ["chrome", "safari", "edge", "firefox"];
 const source = readFileSync(new URL("chrome/src/content.js", root), "utf8");
 
-function fixture({ password = true, autocomplete = "current-password", registration = false, topFrame = true, protocol = "https:", language = "en" } = {}) {
+function fixture({ password = true, autocomplete = "current-password", registration = false, topFrame = true, protocol = "https:", language = "en", confirmHTTP = true } = {}) {
     const callbacks = new Map();
     const messages = [];
     const listeners = [];
@@ -17,6 +17,13 @@ function fixture({ password = true, autocomplete = "current-password", registrat
     const observers = [];
     let timerID = 0;
     let hint = { type: "site-hint", count: 2, unlocked: true, profileAvailable: false };
+    let candidates = [{ id: "github-item", title: "GitHub", username: "octocat" }];
+    let selection = {
+        type: "site-fill-candidate",
+        expectedOrigin: `${protocol}//example.com`,
+        username: "SECRET-user",
+        password: "SECRET-password",
+    };
     let popup = { type: "vault-opened", ok: false };
     class Element {
         constructor(tag) {
@@ -49,10 +56,20 @@ function fixture({ password = true, autocomplete = "current-password", registrat
         closest() { return this.form ?? null; }
         addEventListener(type, listener) { this.events.set(type, listener); }
         dispatchEvent(event) { this.events.get(event.type)?.(event); return true; }
+        focus() { this.focused = true; }
+        setAttribute(name, value) { this[name] = value; }
         attachShadow(options) { this.shadowOptions = options; this.shadow = new Element("shadow"); return this.shadow; }
         getClientRects() { return this.visible && !this.hidden ? [{}] : []; }
         getBoundingClientRect() { return { left: 80, bottom: 120, width: this.visible ? 200 : 0, height: 25 }; }
-        querySelector() { return this.children.find((field) => field.type === "password" || field.autocomplete === "new-password") ?? null; }
+        querySelector(selector) {
+            if (selector === "button") return this.children.find((child) => child.tagName === "button") ?? null;
+            return this.children.find((field) => field.type === "password" || field.autocomplete === "new-password") ?? null;
+        }
+        replaceChildren(...children) {
+            for (const child of this.children) child.parentElement = null;
+            this.children = [];
+            this.append(...children);
+        }
     }
     let nativeSets = 0;
     class Input extends Element {
@@ -101,6 +118,8 @@ function fixture({ password = true, autocomplete = "current-password", registrat
             async sendMessage(message) {
                 messages.push(message);
                 if (message.type === "site-hint") return structuredClone(hint);
+                if (message.type === "site-candidates") return { type: "site-candidates", candidates: structuredClone(candidates) };
+                if (message.type === "select-site-item") return structuredClone(selection);
                 if (message.type === "open-vault") return popup;
             },
         },
@@ -109,6 +128,7 @@ function fixture({ password = true, autocomplete = "current-password", registrat
         browser: api, document, location, navigator: { language }, HTMLInputElement: Input,
         HTMLTextAreaElement: Input,
         Event: class { constructor(type, options) { this.type = type; Object.assign(this, options); } },
+        confirm() { return confirmHTTP; },
         console: { info() {}, warn() {} },
         MutationObserver: class {
             constructor(callback) { observers.push(callback); }
@@ -139,7 +159,9 @@ function fixture({ password = true, autocomplete = "current-password", registrat
         get hintHost() { return html.children.find((element) => element !== form); },
         get button() { return allElements.findLast((element) => element.tagName === "button"); },
         get fallback() { return allElements.findLast((element) => element.tagName === "p"); },
-        set hint(value) { hint = value; }, set popup(value) { popup = value; },
+        set hint(value) { hint = value; }, set candidates(value) { candidates = value; },
+        set selection(value) { selection = value; }, set popup(value) { popup = value; },
+        get candidateList() { return allElements.findLast((element) => element.tagName === "div" && element !== html); },
         async flush() {
             const pending = [...timers.values()];
             timers.clear();
@@ -185,6 +207,106 @@ test("frames, non-web URLs, signup and hidden inputs do not show a hint", async 
     f.intervals[0].callback();
     await settle();
     assert.equal(f.hintHost, undefined);
+});
+
+test("username-first login with a hidden password shows account choices only after focus", async () => {
+    const f = fixture();
+    f.pass.visible = false;
+    await settle();
+    assert.ok(f.hintHost, "a hidden current-password field must not suppress the GitHub-style login hint");
+    assert.equal(f.candidateList.hidden, true);
+
+    f.callbacks.get("document:focusin")({ target: f.username });
+    await settle();
+
+    assert.equal(f.candidateList.hidden, false);
+    assert.equal(f.candidateList.children.length, 1);
+    assert.equal(f.candidateList.children[0].textContent, "GitHub · octocat");
+    assert.equal(f.nativeSets, 0);
+    assert.ok(f.messages.some((message) => message.type === "site-candidates"));
+    let prevented = false;
+    f.username.events.get("keydown")({ key: "ArrowDown", preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(f.candidateList.children[0].focused, true);
+});
+
+test("signup and unclassified hidden-password forms never show account suggestions", async () => {
+    for (const setup of [
+        field => { field.pass.autocomplete = "new-password"; },
+        field => { field.pass.autocomplete = ""; field.pass.visible = false; },
+    ]) {
+        const f = fixture();
+        setup(f);
+        await settle();
+        f.callbacks.get("document:focusin")({ target: f.username });
+        await settle();
+
+        assert.equal(f.hintHost, undefined);
+        assert.ok(!f.messages.some(message => message.type === "site-candidates"));
+    }
+
+    const optedOut = fixture();
+    optedOut.username.autocomplete = "off";
+    await settle();
+    optedOut.callbacks.get("document:focusin")({ target: optedOut.username });
+    await settle();
+    assert.equal(optedOut.candidateList?.hidden, true);
+    assert.ok(!optedOut.messages.some(message => message.type === "site-candidates"));
+});
+
+test("visible current-password fields also expose matching account choices", async () => {
+    const f = fixture();
+    await settle();
+    f.callbacks.get("document:focusin")({ target: f.pass });
+    await settle();
+
+    assert.equal(f.candidateList.hidden, false);
+    assert.equal(f.candidateList.children[0].textContent, "GitHub · octocat");
+});
+
+test("selecting an account writes only the chosen credentials into the visible login form", async () => {
+    const f = fixture();
+    f.pass.visible = false;
+    await settle();
+    f.callbacks.get("document:focusin")({ target: f.username });
+    await settle();
+
+    await f.candidateList.children[0].events.get("click")({ isTrusted: true });
+
+    assert.ok(f.messages.some((message) => message.type === "select-site-item" && message.itemID === "github-item"));
+    assert.equal(f.hintHost, undefined);
+    assert.equal(f.username.value, "SECRET-user");
+    assert.equal(f.nativeSets, 1);
+});
+
+test("conflict gate rejection explains why the chosen account was not filled", async () => {
+    const f = fixture();
+    f.pass.visible = false;
+    f.selection = { type: "site-fill-rejected", reason: "conflict" };
+    await settle();
+    f.callbacks.get("document:focusin")({ target: f.username });
+    await settle();
+
+    await f.candidateList.children[0].events.get("click")({ isTrusted: true });
+
+    assert.equal(f.hintHost !== undefined, true);
+    assert.equal(f.fallback.hidden, false);
+    assert.match(f.fallback.textContent, /sync conflicts/i);
+    assert.equal(f.nativeSets, 0);
+});
+
+test("HTTP fill asks first and does not request credentials when the user cancels", async () => {
+    const f = fixture({ protocol: "http:", confirmHTTP: false });
+    f.pass.visible = false;
+    await settle();
+    f.callbacks.get("document:focusin")({ target: f.username });
+    await settle();
+
+    await f.candidateList.children[0].events.get("click")({ isTrusted: true });
+
+    assert.equal(f.messages.some((message) => message.type === "select-site-item"), false);
+    assert.equal(f.nativeSets, 0);
+    assert.equal(f.username.value, "");
 });
 
 test("registration form gets a count-only profile hint and fills matching blank fields after a trusted popup action", async () => {

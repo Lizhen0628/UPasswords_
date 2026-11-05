@@ -37,7 +37,7 @@ final class AutoFillModel: ObservableObject {
     @Published var conflictBlocked = false
 
     private var context: ASCredentialProviderExtensionContext?
-    private var serviceHosts: [String] = []
+    private var serviceURLs: [String] = []
     private var all: [Card] = []
     /// 断言签名输入(列表流)。
     private var passkeyParams: ASPasskeyCredentialRequestParameters? = nil
@@ -61,7 +61,7 @@ final class AutoFillModel: ObservableObject {
                 serviceIdentifiers: [ASCredentialServiceIdentifier],
                 flow: Flow = .password) {
         self.flow = flow
-        serviceHosts = serviceIdentifiers.compactMap { Self.normalizeHost($0.identifier) }
+        serviceURLs = serviceIdentifiers.compactMap { Self.normalizeServiceURL($0.identifier) }
         begin(context: context)
     }
 
@@ -70,7 +70,7 @@ final class AutoFillModel: ObservableObject {
                            params: ASPasskeyCredentialRequestParameters) {
         flow = .passkey
         passkeyParams = params
-        serviceHosts = [params.relyingPartyIdentifier]
+        serviceURLs = ["https://\(params.relyingPartyIdentifier)/"]
         begin(context: context)
     }
 
@@ -80,10 +80,10 @@ final class AutoFillModel: ObservableObject {
             flow = .passkey
             passkeyRequest = passkeyReq
             let rp = (passkeyReq.credentialIdentity as? ASPasskeyCredentialIdentity)?.relyingPartyIdentifier
-            serviceHosts = rp.map { [$0] } ?? []
+            serviceURLs = rp.map { ["https://\($0)/"] } ?? []
         } else {
             flow = .password
-            serviceHosts = [Self.normalizeHost(request.credentialIdentity.serviceIdentifier.identifier)].compactMap { $0 }
+            serviceURLs = [Self.normalizeServiceURL(request.credentialIdentity.serviceIdentifier.identifier)].compactMap { $0 }
         }
         begin(context: context)
     }
@@ -94,7 +94,7 @@ final class AutoFillModel: ObservableObject {
         flow = .passkeyRegistration
         passkeyRequest = request as? ASPasskeyCredentialRequest
         let rp = (request.credentialIdentity as? ASPasskeyCredentialIdentity)?.relyingPartyIdentifier
-        serviceHosts = rp.map { [$0] } ?? []
+        serviceURLs = rp.map { ["https://\($0)/"] } ?? []
         begin(context: context)
     }
 
@@ -314,29 +314,31 @@ final class AutoFillModel: ObservableObject {
         return host
     }
 
-    static func hostMatches(_ cardHost: String, service serviceHost: String) -> Bool {
-        guard !cardHost.isEmpty, !serviceHost.isEmpty else { return false }
-        if cardHost == serviceHost { return true }
-        // 守卫与 WebExtensions domain.ts / SafariWebExtensionHandler 对齐:
-        // 单标签 host(裸公共后缀 com/io)与纯数字标签(IP 尾段)禁止泛匹配,
-        // 只允许全等——否则存了裸后缀/IP 尾段的条目会在任意外部域名被候选
-        let labels = { (host: String) in host.split(separator: ".").filter { !$0.isEmpty } }
-        guard labels(cardHost).count >= 2, labels(serviceHost).count >= 2 else { return false }
-        let isNumericHost = { (host: String) in host.split(separator: ".").allSatisfy { UInt($0) != nil } }
-        if isNumericHost(cardHost) || isNumericHost(serviceHost) { return false }
-        return cardHost.hasSuffix("." + serviceHost)
-            || serviceHost.hasSuffix("." + cardHost)
+    static func normalizeServiceURL(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.contains("://") {
+            guard let components = URLComponents(string: value),
+                  let scheme = components.scheme?.lowercased(),
+                  ["http", "https"].contains(scheme),
+                  components.host?.isEmpty == false,
+                  components.user == nil, components.password == nil else { return nil }
+            return components.string
+        }
+        guard let host = normalizeHost(value) else { return nil }
+        return "https://\(host)/"
     }
-
-    private func cardHost(_ card: Card) -> String? { Self.normalizeHost(card.website) }
 
     /// 与当前页面域名匹配的建议条目(通行密钥流按 RP 精确匹配)。
     var suggested: [Card] {
         if flow == .passkey { return filtered(all.filter(passkeyMatch)) }
-        guard !serviceHosts.isEmpty else { return [] }
+        guard !serviceURLs.isEmpty else { return [] }
         return filtered(all.filter { card in
-            guard let h = cardHost(card) else { return false }
-            return serviceHosts.contains { Self.hostMatches(h, service: $0) }
+            let websiteFields = card.fields.filter { $0.type == .website }
+            guard !websiteFields.isEmpty else { return false }
+            return serviceURLs.contains { serviceURL in
+                SiteMatching.matches(serviceURL, sites: websiteFields)
+            }
         })
     }
 
@@ -382,7 +384,7 @@ final class AutoFillModel: ObservableObject {
             .sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
     }
 
-    var serviceHostLabel: String? { serviceHosts.first }
+    var serviceHostLabel: String? { serviceURLs.first.flatMap(Self.normalizeHost) }
 
     private func filtered(_ cards: [Card]) -> [Card] {
         let q = query.trimmingCharacters(in: .whitespaces)

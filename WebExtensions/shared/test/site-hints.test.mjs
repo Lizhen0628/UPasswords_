@@ -11,35 +11,65 @@ const item = (host = "example.com", password = "SECRET-password") => ({
 function fixture() {
     const listeners = [];
     const events = {};
+    const order = [];
     const badges = [];
     const tab = { id: 7, active: true, url: "https://login.example.com/signin" };
-    let state = { unlocked: true, items: [item(), item("other.example"), item("example.com", "")] };
+    let state = { unlocked: true, generation: "generation-1", snapshotVersion: 1,
+        items: [item(), item("other.example"), item("example.com", "")] };
+    let storedGate = {
+        version: 1, userId: "test-user", vaultId: "test-vault", checkedAt: Date.now(), entries: [],
+    };
     let inspections = 0;
     let opens = 0;
+    let touches = 0;
     const event = (name) => ({ addListener(listener) { events[name] = listener; } });
     const api = {
-        runtime: { id: "own-extension", onMessage: { addListener(fn) { listeners.push(fn); } } },
+        runtime: {
+            id: "own-extension",
+            getURL(path) { return `moz-extension://id/${path}`; },
+            onMessage: { addListener(fn) { listeners.push(fn); } },
+        },
         tabs: {
-            async get(id) { assert.equal(id, 7); return { ...tab }; },
+            async get(id) { order.push("tab-read"); assert.equal(id, 7); return { ...tab }; },
             async query() { return [{ ...tab }]; },
             onActivated: event("activated"), onUpdated: event("updated"), onRemoved: event("removed"),
         },
-        storage: { onChanged: event("storage") },
+        storage: {
+            local: { async get(keys) {
+                const values = {
+                    "relay.session": { token: "test-token", userId: "test-user" },
+                    "relay.vault": { id: "test-vault" },
+                    "extension.autofillConflictGate": storedGate,
+                };
+                return Object.fromEntries(keys.map((key) => [key, values[key]]));
+            } },
+            onChanged: event("storage"),
+        },
         action: {
             async setBadgeText(value) { badges.push(value); },
             async setBadgeBackgroundColor() {},
-            async openPopup() { opens++; },
+            async openPopup() { order.push("open-popup"); opens++; },
         },
     };
-    const session = { async inspect() { inspections++; return state; } };
+    const session = {
+        async inspect() { inspections++; return state; },
+        async handle(request) {
+            if (request.action === "touch") {
+                touches++;
+                return { type: "vault-session", unlocked: true, generation: state.generation, expiresAt: Date.now() + 60_000 };
+            }
+            return { type: "vault-session", unlocked: false };
+        },
+    };
     installSiteHints(api, session);
     const sender = { id: "own-extension", tab: { id: 7 }, frameId: 0, url: tab.url };
     const request = (message = { type: "site-hint" }, source = sender) => new Promise((resolve) => {
         assert.equal(listeners[0](message, source, resolve), true);
     });
-    return { api, sender, request, listener: listeners[0], events, tab, badges,
-        set state(value) { state = value; }, get inspections() { return inspections; },
-        get opens() { return opens; },
+    return { api, sender, request, listener: listeners[0], events, order, tab, badges,
+        set state(value) { state = value; }, set conflictGate(value) { storedGate = value; },
+        get inspections() { return inspections; },
+        get opens() { return opens; }, get touches() { return touches; },
     };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -77,6 +107,81 @@ test("registration hints expose profile availability without exposing profile va
         fields: [{ autofill: "current-password", value: "SECRET-unrelated" }],
     }] };
     assert.equal((await f.request({ type: "site-hint", registration: true })).profileAvailable, false);
+});
+
+test("site candidates return only matching labels and usernames after an authorized request", async () => {
+    const f = fixture();
+    f.state = { unlocked: true, items: [
+        { ...item(), fields: [
+            { type: "login", value: "alice@example.com" },
+            { type: "password", value: "SECRET-password" },
+        ] },
+        item("other.example"),
+    ] };
+
+    const response = await f.request({ type: "site-candidates" });
+
+    assert.deepEqual(response, { type: "site-candidates", candidates: [
+        { id: "private-id", title: "SECRET-title", username: "alice@example.com" },
+    ] });
+    assert.doesNotMatch(JSON.stringify(response), /SECRET-password|fields|notes|source/);
+    const before = f.inspections;
+    assert.deepEqual(await f.request({ type: "site-candidates" }, { ...f.sender, frameId: 1 }), {
+        type: "site-candidates", candidates: [],
+    });
+    assert.equal(f.inspections, before);
+});
+
+test("disabled entries are absent from count and account suggestions", async () => {
+    const f = fixture();
+    f.state = { unlocked: true, items: [{ ...item(), autofillEnabled: false }] };
+
+    assert.deepEqual(await f.request({ type: "site-hint" }), {
+        type: "site-hint", count: 0, unlocked: true, profileAvailable: false,
+    });
+    assert.deepEqual(await f.request({ type: "site-candidates" }), {
+        type: "site-candidates", candidates: [],
+    });
+    assert.deepEqual(await f.request({ type: "select-site-item", itemID: "private-id" }), {
+        type: "site-fill-rejected", reason: "item_unavailable",
+    });
+});
+
+test("candidate selection fills one current-site credential without opening popup", async () => {
+    const f = fixture();
+    f.order.length = 0;
+    const selected = await f.request({ type: "select-site-item", itemID: "private-id" });
+    assert.deepEqual(selected, {
+        type: "site-fill-candidate",
+        expectedOrigin: "https://login.example.com",
+        username: "SECRET-user",
+        password: "SECRET-password",
+    });
+    assert.equal(f.opens, 0);
+    assert.equal(f.touches, 1);
+});
+
+test("candidate selection fails closed for invalid requests and unresolved conflicts", async () => {
+    const f = fixture();
+    assert.deepEqual(await f.request({ type: "select-site-item", itemID: "missing" }), {
+        type: "site-fill-rejected", reason: "item_unavailable",
+    });
+    f.state = { unlocked: false, generation: "generation-1", snapshotVersion: 1, items: [item()] };
+    assert.deepEqual(await f.request({ type: "select-site-item", itemID: "private-id" }), {
+        type: "site-fill-rejected", reason: "item_unavailable",
+    });
+    const conflictedID = "12345678-abcd-4234-8abc-123456789abc";
+    f.state = { unlocked: true, generation: "generation-1", snapshotVersion: 1, items: [{
+        ...item(), id: conflictedID,
+    }] };
+    f.conflictGate = {
+        version: 1, userId: "test-user", vaultId: "test-vault", checkedAt: Date.now(),
+        entries: [{ itemID: conflictedID, fieldTokens: ["current-password"], wholeItem: false }],
+    };
+    assert.deepEqual(await f.request({ type: "select-site-item", itemID: conflictedID }), {
+        type: "site-fill-rejected", reason: "conflict",
+    });
+    assert.equal(f.touches, 0, "blocked credentials must not extend the unlock session");
 });
 
 test("sender guards reject foreign extensions, popup, iframes and stale origins before inspecting", async () => {

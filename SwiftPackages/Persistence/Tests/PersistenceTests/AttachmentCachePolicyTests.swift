@@ -47,6 +47,33 @@ struct AttachmentCachePolicyTests {
         #expect(!recomputed.hasPendingWork)
     }
 
+    @Test("Lazy attachment metadata still participates in cache budgeting")
+    func accountsForUnloadedCachedBytes() throws {
+        let (loadedDatabase, state, versions) = try fixture()
+        var database = loadedDatabase
+        for cardIndex in database.cards.indices {
+            database.cards[cardIndex].files[0].discardLocalContent()
+        }
+        let cachedBytes = Dictionary(uniqueKeysWithValues: versions.map { ($0, 10) })
+        var ledger = AttachmentDownloadLedger()
+        for (index, version) in versions.enumerated() {
+            ledger.recordAccess(to: version, now: now.addingTimeInterval(Double(index)))
+        }
+        let plan = try AttachmentCachePolicy.makePlan(
+            database: database,
+            state: state,
+            key: key,
+            ledger: ledger,
+            budgetBytes: 30,
+            incomingBytes: 10,
+            cachedContentBytes: cachedBytes
+        )
+        #expect(plan.hasCapacity)
+        #expect(plan.cachedBytes == 20)
+        #expect(plan.evictedVersions == [versions[0]])
+        #expect(plan.database.cards.allSatisfy { $0.files[0].data == nil })
+    }
+
     @Test("Offline retention and in-use versions are never eviction candidates")
     func protectsOfflineAndInUse() throws {
         let (database, state, versions) = try fixture()

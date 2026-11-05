@@ -102,6 +102,8 @@ export type RequestMessage =
     | { type: "query"; host: string }
     | { type: "fill"; candidate: FillCandidate; expectedOrigin: string }
     | { type: "site-hint"; registration?: boolean }
+    | { type: "site-candidates" }
+    | { type: "select-site-item"; itemID: string }
     | { type: "registration-check" }
     | { type: "open-vault" }
     | { type: "unlock"; password: string }
@@ -110,11 +112,14 @@ export type RequestMessage =
     /** popup→bg:取当前活动页地址(tab.url 不可见时的回落) */
     | { type: "active-location" };
 
-/** 普通扩展消息的响应联合；敏感内容仅向获准的扩展上下文返回。 */
+/** 普通扩展消息的响应联合；凭据只在用户明确选择后返回到获准的隔离内容脚本。 */
 export type ResponseMessage =
     | VaultSessionResponse
     | { type: "pong" }
     | { type: "site-hint"; count: number; unlocked: boolean; profileAvailable: boolean }
+    | { type: "site-candidates"; candidates: { id: string; title: string; username: string }[] }
+    | { type: "site-fill-candidate"; expectedOrigin: string; username: string; password: string }
+    | { type: "site-fill-rejected"; reason: string }
     | { type: "vault-opened"; ok: boolean }
     | { type: "active-location"; href: string | null }
     | { type: "items"; candidates: FillCandidate[] }
@@ -135,5 +140,6 @@ export function isRequestMessage(value: unknown): value is RequestMessage {
     }
     return type === "ping" || type === "query" || type === "fill" || type === "unlock"
         || type === "location" || type === "active-location"
-        || type === "site-hint" || type === "open-vault" || type === "registration-check";
+        || type === "site-hint" || type === "site-candidates" || type === "select-site-item"
+        || type === "open-vault" || type === "registration-check";
 }

@@ -4,7 +4,9 @@ options:
   deploymentTarget:
     macOS: "14.0"
     iOS: "17.0"
+  xcodeVersion: "27.0"
   createIntermediateGroups: true
+  postGenCommand: ruby ../scripts/configure-xcode-capabilities.rb
 
 packages:
   Core:
@@ -27,6 +29,8 @@ targets:
     sources:
       # macOS 有自己的组件体系,不编译 Shared/(避免与 macOS CardIconView 等重名)
       - path: macOS/Sources
+      - path: macOS/Resources/AppIcon.icns
+        buildPhase: resources
     dependencies:
       - package: Core
         product: UPasswordsCore
@@ -34,6 +38,8 @@ targets:
         product: UPasswordsPersistence
       - package: Networking
         product: UPasswordsNetworking
+      - target: UPasswordsCredentialProvider
+        embed: true
     info:
       path: macOS/Info.plist
       properties:
@@ -50,6 +56,34 @@ targets:
         PRODUCT_NAME: UPasswords
         ENABLE_PREVIEWS: "YES"
         CODE_SIGN_ENTITLEMENTS: macOS/UPasswords.entitlements
+        DEVELOPMENT_TEAM: 2CV6VKVD26
+        CODE_SIGN_STYLE: Automatic
+
+  UPasswordsCredentialProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: macOS/CredentialProvider
+    dependencies:
+      - package: Core
+        product: UPasswordsCore
+      - package: Persistence
+        product: UPasswordsPersistence
+    info:
+      path: macOS/CredentialProvider/Info.plist
+      properties:
+        CFBundleDisplayName: UPasswords
+        NSExtension:
+          NSExtensionAttributes:
+            ASCredentialProviderExtensionShowsConfigurationUI: false
+          NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.upasswords.UPasswords.CredentialProvider
+        PRODUCT_NAME: UPasswordsCredentialProvider
+        SKIP_INSTALL: "YES"
+        CODE_SIGN_ENTITLEMENTS: macOS/CredentialProvider/CredentialsProvider.entitlements
         DEVELOPMENT_TEAM: 2CV6VKVD26
         CODE_SIGN_STYLE: Automatic
 

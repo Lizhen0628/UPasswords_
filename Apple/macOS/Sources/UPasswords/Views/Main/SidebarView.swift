@@ -287,7 +287,7 @@ struct SidebarRow: View {
 
     var body: some View {
         SidebarRowButton(title: sp.name, system: sp.systemImage,
-                         count: settings.showCardCount ? ctx.count(for: .special(sp)) : nil,
+                         count: settings.showCardCount ? ctx.sidebarCount(for: .special(sp)) : nil,
                          selected: ctx.selection == .special(sp)) {
             ctx.selection = .special(sp)
         }
@@ -318,7 +318,7 @@ struct SidebarLabelRow: View {
 
     var body: some View {
         SidebarRowButton(title: label.name, system: "tag",
-                         count: settings.showCardCount ? ctx.count(for: .label(label.id)) : nil,
+                         count: settings.showCardCount ? ctx.sidebarCount(for: .label(label.id)) : nil,
                          tint: CardColor.color(named: label.color),
                          selected: ctx.selection == .label(label.id)) {
             ctx.selection = .label(label.id)

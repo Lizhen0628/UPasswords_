@@ -37,7 +37,8 @@ public enum AttachmentCachePolicy {
         ledger: AttachmentDownloadLedger,
         budgetBytes: Int = defaultBudgetBytes,
         incomingBytes: Int = 0,
-        protectedVersions: Set<AttachmentDownloadLedger.Version> = []
+        protectedVersions: Set<AttachmentDownloadLedger.Version> = [],
+        cachedContentBytes: [AttachmentDownloadLedger.Version: Int] = [:]
     ) throws -> Plan {
         guard budgetBytes >= 0, incomingBytes >= 0 else { throw RowSyncSafetyError.invalidResponse }
         let baselineByID = try state.validatedBaselines(key: key)
@@ -49,16 +50,16 @@ public enum AttachmentCachePolicy {
                 && state.pendingConflicts[card.id] == nil
                 && baselineByID[card.id]?.matches(.card(card)) == true
             for attachment in card.images + card.files {
-                guard let data = attachment.data else { continue }
-                let total = cachedBytes.addingReportingOverflow(data.count)
-                guard !total.overflow else { throw RowSyncSafetyError.invalidResponse }
-                cachedBytes = total.partialValue
                 let version = AttachmentDownloadLedger.Version(
                     cardID: card.id, attachmentID: attachment.id, contentVersion: attachment.contentVersion)
+                guard let bytes = attachment.data?.count ?? cachedContentBytes[version] else { continue }
+                let total = cachedBytes.addingReportingOverflow(bytes)
+                guard !total.overflow else { throw RowSyncSafetyError.invalidResponse }
+                cachedBytes = total.partialValue
                 guard isSafe, attachment.hasPersistentID, attachment.hasPersistentContentVersion,
                       !ledger.offlineAttachments.contains(version.identity),
-                      !protectedVersions.contains(version), !data.isEmpty else { continue }
-                candidates.append((version, data.count, ledger.records[version]?.lastAccess ?? .distantPast))
+                      !protectedVersions.contains(version), bytes > 0 else { continue }
+                candidates.append((version, bytes, ledger.records[version]?.lastAccess ?? .distantPast))
             }
         }
         let targetBytes = max(0, budgetBytes - min(budgetBytes, incomingBytes))

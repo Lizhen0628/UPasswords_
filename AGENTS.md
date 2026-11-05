@@ -6,7 +6,7 @@
 
 ## 1. 开发边界与架构
 
-- 【必须】客户端与文档在本地仓库开发；服务端在 `service-admin:~/UPasswords` 开发。两端同时改动时，分别修改并核对接口契约与部署状态。
+- 【必须】客户端、服务端代码与文档一律在本地仓库开发，禁止直接在服务器编辑服务端代码。服务端改动通过 GitHub 仓库同步到 `service-admin:~/UPasswords` 后，再重建并部署服务端 API 容器；部署后核对容器健康状态与接口响应。
 - 【必须】本地和服务端均直接使用 `main`；除非用户要求，不创建或切换功能分支。
 - 【必须】基线为 swift-tools 5.9、macOS 14+；库包另支持 iOS 17+。库包禁止依赖 AppKit 等 macOS 专属框架，跨平台类型放库包，macOS UI 绑定留在 `Apple/macOS`。
 - 【必须】沿用 SwiftUI MV + `ObservableObject`，不引入 `@Observable`。macOS 会话为 `@MainActor AppContext` 单例；`AppSettings` 同样隔离于主 actor。

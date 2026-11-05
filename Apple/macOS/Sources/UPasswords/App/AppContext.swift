@@ -17,6 +17,67 @@ import UPasswordsNetworking
 /// - AppContext+Sync:修改密码、备份、行级云同步及本地同步快照提交
 @MainActor
 final class AppContext: ObservableObject {
+    @MainActor
+    final class SearchState {
+        @MainActor
+        final class Input: ObservableObject {
+            @Published private(set) var text = ""
+
+            fileprivate func update(_ text: String) {
+                self.text = text
+            }
+        }
+
+        @MainActor
+        final class Results: ObservableObject {
+            @Published private(set) var query = ""
+
+            fileprivate func apply(_ query: String) {
+                self.query = query
+            }
+        }
+
+        private static let debounceInterval = Duration.milliseconds(200)
+
+        let input = Input()
+        let results = Results()
+
+        private lazy var debouncer = SearchInputDebouncer(interval: Self.debounceInterval) { [weak self] text in
+            guard let self, self.results.query != text else { return }
+            self.results.apply(text)
+            Log.info("ui", "search apply chars=\(text.count)")
+        }
+
+        func setText(_ text: String) {
+            input.update(text)
+            debouncer.textChanged(text)
+        }
+
+        func clear() {
+            guard !input.text.isEmpty || !results.query.isEmpty else { return }
+            input.update("")
+            debouncer.clear()
+            Log.info("ui", "search clear")
+        }
+    }
+
+    struct CardFilterCacheKey: Equatable {
+        let databaseRevision: UInt64
+        let recentRevision: UInt64
+        let selection: SidebarSelection
+        let search: String
+        let searchByLabels: Bool
+        let searchPasswords: Bool
+    }
+
+    struct CardSortCacheKey: Equatable {
+        let filter: CardFilterCacheKey
+        let sorting: String
+        let favoritesFirst: Bool
+    }
+
+    static let credentialProviderKeychainAccessGroup = PasswordStore.credentialProviderAccessGroup
+
     enum Phase: Equatable {
         case setup        // SetupWindowController flow (first launch)
         case locked       // LockWindowController
@@ -33,7 +94,38 @@ final class AppContext: ObservableObject {
             savePendingPersonalInfoIfNeeded()
         }
     }
-    @Published var database = PasswordDatabase()
+    @Published var database = PasswordDatabase() {
+        didSet {
+            guard !isApplyingAttachmentContentUpdate else { return }
+            databaseRevision &+= 1
+            cardIndexByID = [:]
+            for (index, card) in database.cards.enumerated() {
+                cardIndexByID[card.id] = index
+            }
+            reusedPasswordCardIDs = SamePasswordsService.cardIDsWithReusedPasswords(
+                cards: database.activeCards)
+            sidebarCountsAreCurrent = false
+        }
+    }
+    var isApplyingAttachmentContentUpdate = false
+    var databaseRevision: UInt64 = 0
+    var recentRevision: UInt64 = 0
+    var cardIndexByID: [UUID: Int] = [:]
+    var filteredCardIDsCacheKey: CardFilterCacheKey?
+    var filteredCardIDsCache: [UUID] = []
+    var sortedCardIDsCacheKey: CardSortCacheKey?
+    var sortedCardIDsCache: [UUID] = []
+
+    func updateAttachmentContent(_ updatedDatabase: PasswordDatabase) {
+        isApplyingAttachmentContentUpdate = true
+        database = updatedDatabase
+        isApplyingAttachmentContentUpdate = false
+    }
+    private(set) var reusedPasswordCardIDs = Set<UUID>()
+    var sidebarCardCounts: [SidebarSelection: Int] = [:]
+    var sidebarActiveCardIDs = Set<UUID>()
+    var sidebarCountsCalculatedAt = Date.distantPast
+    var sidebarCountsAreCurrent = false
     @Published var syncCursorRecoveryRequired = false
     /// Memory-only onboarding draft, consumed after creation or restoration unlocks the vault.
     var pendingPersonalInfo: PersonalInfoDraft?
@@ -49,12 +141,7 @@ final class AppContext: ObservableObject {
     }
     @Published var selection: SidebarSelection = .special(.allCards)
     @Published var selectedCardId: UUID? = nil
-    /// 搜索框逐键文本。故意不用 @Published(同 editDraft/lastActivity 先例,规范 11.5):
-    /// 逐键广播 objectWillChange 会让整棵视图树重渲染造成输入卡顿;
-    /// TextField 编辑期间自绘显示,防抖后的 searchQuery 才驱动列表/计数。
-    private(set) var searchText: String = ""
-    /// 防抖后真正参与列表/计数过滤的搜索词(防抖逻辑见 SearchInputDebouncer)。
-    @Published private(set) var searchQuery: String = ""
+    let searchState = SearchState()
     /// 编辑工作副本。故意不用 @Published:填字段值时每个按键都会写入,
     /// @Published 会逐键广播 objectWillChange 让整棵视图树重渲染(输入卡顿)。
     /// didSet 只在「打开(nil → 有值)」和「关闭(有值 → nil)」时通知视图;
@@ -133,6 +220,7 @@ final class AppContext: ObservableObject {
     var attachmentNetworkState = AttachmentNetworkState.unknown
     var attachmentDownloadQueue = AttachmentDownloadQueue()
     var attachmentDownloadLedger: AttachmentDownloadLedger?
+    var attachmentCacheBytes: [AttachmentDownloadLedger.Version: Int] = [:]
     var attachmentNetworkObserved = false
     var attachmentLedgerUnavailable = false
     var attachmentRetryTask: Task<Void, Never>?
@@ -159,6 +247,7 @@ final class AppContext: ObservableObject {
     }()
     private var cancellables = Set<AnyCancellable>()
     private var autoLockTimer: Timer? = nil
+    @Published private(set) var biometricUnlockRequestID: UUID?
     /// 云同步到期 ticker(5s 一跳,由守卫条件过滤;逻辑见 AppContext+Sync)。
     /// internal:extension 在独立文件,无法用 private(规范 3.7)。
     var autoSyncTimer: Timer? = nil
@@ -170,8 +259,6 @@ final class AppContext: ObservableObject {
     static let shared = AppContext()
 
     init() {
-        // 沙盒化迁移必须最先跑:后续 settings/store 都依赖迁移后的偏好与库文件
-        LegacyPreferencesMigration.run()
         bootstrapPhase()
         installActivityMonitor()
         startAttachmentNetworkMonitor()
@@ -360,7 +447,10 @@ final class AppContext: ObservableObject {
         }
         store.mainDatabaseName = name
         if touchID && PasswordStore.biometricAvailable() {
-            PasswordStore.savePasswordForBiometric(password, databaseName: name)
+            PasswordStore.savePasswordForBiometric(
+                password,
+                databaseName: name,
+                sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
         }
         try unlock(name: name, password: password)
         activeSheet = .setupPlan
@@ -375,21 +465,28 @@ final class AppContext: ObservableObject {
     /// - Throws: 文件、同步状态、信封、解密或 XML 错误。
     func unlock(name: String, password: String) throws {
         Log.info("lifecycle", "unlock \"\(name)\"")
-        let loaded: (PasswordDatabase, SymmetricKey, RowSyncState)
+        let loaded: (PasswordDatabase, SymmetricKey, RowSyncState,
+                     [AttachmentDownloadLedger.Version: Int])
         do {
             let dbAndKey: (PasswordDatabase, SymmetricKey)
+            let cacheBytes: [AttachmentDownloadLedger.Version: Int]
             if let nativeStore, try nativeStore.containsVault(name: name) {
-                dbAndKey = try nativeStore.loadUnlocked(name: name, password: password)
+                dbAndKey = try nativeStore.loadUnlocked(
+                    name: name, password: password, hydrateAttachments: false)
+                cacheBytes = try nativeStore.cachedAttachmentBytes(vaultName: name)
             } else {
                 dbAndKey = try store.loadUnlocked(name: name, password: password)
                 if let nativeStore {
                     _ = try nativeStore.importLegacyIfNeeded(
                         name: name, password: password, legacyStore: store)
+                    cacheBytes = try nativeStore.cachedAttachmentBytes(vaultName: name)
+                } else {
+                    cacheBytes = [:]
                 }
             }
             let (db, vek) = dbAndKey
             let state = try store.loadSyncState(for: name)
-            loaded = (db, vek, state)
+            loaded = (db, vek, state, cacheBytes)
         } catch {
             Log.warn("lifecycle", "unlock \"\(name)\" failed: \(error)")
             throw error
@@ -398,6 +495,7 @@ final class AppContext: ObservableObject {
         vaultKey = loaded.1
         databaseName = name
         rowSync = loaded.2
+        attachmentCacheBytes = loaded.3
         Log.info("sync", "restored row sync state for \"\(name)\" (cursor=\(rowSync.cursor), pending=\(rowSync.dirtyUpserts.count + rowSync.dirtyDeletes.count))")
         self.password = password
         phase = .unlocked
@@ -408,6 +506,7 @@ final class AppContext: ObservableObject {
         selectedCardId = database.activeCards.first?.id
         Log.info("lifecycle", "unlocked \"\(name)\": \(database.cards.count) cards, \(database.labels.count) labels")
         SafariSnapshotBridge.push(databaseName: name, store: store)
+        CredentialProviderIdentityStore.replace(with: database.activeCards)
         scheduleIconBackfill()
         scheduleAutoBackupIfNeeded()
         startAutoSyncTickerIfNeeded()
@@ -422,9 +521,25 @@ final class AppContext: ObservableObject {
         if let stored = PasswordStore.loadPassword(databaseName: name), stored != password {
             PasswordStore.savePassword(password, databaseName: name)
             if settings.fastUnlock && PasswordStore.biometricAvailable() {
-                PasswordStore.savePasswordForBiometric(password, databaseName: name)
+                PasswordStore.savePasswordForBiometric(
+                    password,
+                    databaseName: name,
+                    sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
             }
             Log.info("keychain", "password copy healed after unlock for \"\(name)\"")
+        }
+        if let accessGroup = Self.credentialProviderKeychainAccessGroup,
+           settings.fastUnlock,
+           PasswordStore.biometricAvailable(),
+           !PasswordStore.hasBiometricItem(databaseName: name, accessGroup: accessGroup),
+           PasswordStore.saveSharedBiometricPassword(
+               password,
+               databaseName: name,
+               accessGroup: accessGroup) {
+            Log.info("keychain", "migrated biometric item to Data Protection Keychain for \(name)")
+        }
+        if ProcessInfo.processInfo.arguments.contains("--enable-autofill-current-vault") {
+            enableAutofillForCurrentVaultCredentials()
         }
         // 引导登录在先的库在此自动补绑;信封先行:解锁后即拉取注册表,
         // 密码被他机修改能立刻提示
@@ -560,7 +675,8 @@ final class AppContext: ObservableObject {
 
     /// 当前数据库是否已启用 Touch ID 快速解锁(存在生物识别密码副本)。
     var hasBiometricItem: Bool {
-        PasswordStore.hasBiometricItem(databaseName: databaseName)
+        guard let accessGroup = Self.credentialProviderKeychainAccessGroup else { return false }
+        return PasswordStore.hasBiometricItem(databaseName: databaseName, accessGroup: accessGroup)
     }
 
     /// 启用 Touch ID 快速解锁:把当前(已解锁状态下的)数据库密码存为副本。
@@ -570,30 +686,57 @@ final class AppContext: ObservableObject {
             Log.warn("keychain", "enableTouchIDUnlock skipped (phase=\(phase), password empty=\(password.isEmpty))")
             return
         }
-        PasswordStore.savePasswordForBiometric(password, databaseName: databaseName)
+        PasswordStore.savePasswordForBiometric(
+            password,
+            databaseName: databaseName,
+            sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
     }
 
-    /// LockedState biometric unlock: prompts Touch ID, then unlocks.
+    /// Requests an embedded Touch ID evaluation from the visible lock screen.
     func unlockWithTouchID() {
-        guard phase == .locked, settings.fastUnlock else {
-            Log.debug("keychain", "unlockWithTouchID skipped (phase=\(phase), fastUnlock=\(settings.fastUnlock))")
+        guard phase == .locked, settings.fastUnlock, hasBiometricItem else {
+            Log.debug(
+                "keychain",
+                "unlockWithTouchID skipped (phase=\(phase), fastUnlock=\(settings.fastUnlock), item=\(hasBiometricItem))")
             return
         }
-        Log.info("keychain", "Touch ID unlock requested for \"\(databaseName)\"")
-        PasswordStore.biometricPassword(databaseName: databaseName) { [weak self] pw in
-            guard let pw else {
-                Log.warn("keychain", "Touch ID evaluation failed or cancelled")
-                return
-            }
-            // evaluatePolicy 完成回调在系统私有队列;经 @MainActor 任务回主线程再解锁
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    try self.unlock(name: self.databaseName, password: pw)
-                } catch {
-                    Log.warn("keychain", "Touch ID unlock failed at load: \(error)")
-                }
-            }
+        guard biometricUnlockRequestID == nil else {
+            Log.debug("keychain", "unlockWithTouchID skipped (request already in progress)")
+            return
+        }
+
+        biometricUnlockRequestID = UUID()
+        Log.info("keychain", "embedded Touch ID unlock requested for \"\(databaseName)\"")
+    }
+
+    /// Cancels an embedded Touch ID request when the user switches to password entry.
+    func cancelTouchIDUnlock() {
+        guard biometricUnlockRequestID != nil else { return }
+        biometricUnlockRequestID = nil
+        Log.info("keychain", "embedded Touch ID unlock cancelled for password entry")
+    }
+
+    /// Completes an embedded Touch ID request after its context has read the protected item.
+    func completeTouchIDUnlock(
+        requestID: UUID,
+        databaseName requestedDatabaseName: String,
+        password: String?
+    ) {
+        guard biometricUnlockRequestID == requestID else { return }
+        biometricUnlockRequestID = nil
+        guard phase == .locked, databaseName == requestedDatabaseName else {
+            Log.info("keychain", "embedded Touch ID result discarded after session changed")
+            return
+        }
+        guard let password else {
+            Log.warn("keychain", "embedded Touch ID evaluation failed or was cancelled")
+            return
+        }
+        do {
+            try unlock(name: requestedDatabaseName, password: password)
+            Log.info("keychain", "embedded Touch ID unlock completed")
+        } catch {
+            Log.warn("keychain", "embedded Touch ID unlock failed at load: \(error)")
         }
     }
 
@@ -616,7 +759,7 @@ final class AppContext: ObservableObject {
     }
 
     /// erase_data_command — removes local data (cloud copies untouched).
-    /// 自毁/手动擦除必须连 Safari 快照、泄露哈希清单与 relay 登录态一并清:
+    /// 自毁/手动擦除必须连扩展快照、泄露哈希清单与 relay 登录态一并清:
     /// 残留的密文+信封可被离线爆破,残留令牌可枚举账户。
     func eraseAllData() {
         Log.warn("lifecycle", "ERASE ALL DATA (self-destruct or manual)")
@@ -630,8 +773,11 @@ final class AppContext: ObservableObject {
         for db in store.list() {
             try? store.delete(name: db.name)
         }
-        if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.upasswords.shared") {
-            try? FileManager.default.removeItem(at: group.appendingPathComponent("Safari", isDirectory: true))
+        do {
+            try SafariSnapshotBridge.removeSnapshots()
+        } catch {
+            Log.error("db", "shared extension snapshot cleanup failed: \(error)")
+            AppToast.shared.show(L10n.t("snapshot_cleanup_failed"))
         }
         CompromisedService.clearDynamicList()
         relay.logout(database: databaseName)
@@ -669,6 +815,7 @@ final class AppContext: ObservableObject {
                     )
                 }
             }
+            rememberAttachmentCache(in: snapshot)
             try store.commitSyncSnapshot(snapshot, name: name, vaultKey: vaultKey,
                                          state: state, envelope: envelope,
                                          rekeyBackupHistoryFrom: rekeyBackupHistoryFrom)
@@ -688,13 +835,14 @@ final class AppContext: ObservableObject {
     /// 使用当前库密钥保存整库并推送 Safari 加密快照，失败时记录日志并提示。
     ///
     /// 锁定状态或密钥缺失时不写盘；调用方不能将返回视为可捕获的成功凭据。
-    func save() {
-        guard phase == .unlocked else { return }
+    @discardableResult
+    func save() -> Bool {
+        guard phase == .unlocked else { return false }
         do {
             // 解锁路径必持库密钥;缺失说明会话状态异常,绝不能退化为其他写法
             guard let vaultKey else {
                 Log.error("db", "save \"\(databaseName)\" aborted: no vault key in session")
-                return
+                return false
             }
             try nativeStore?.replace(
                 database,
@@ -702,11 +850,52 @@ final class AppContext: ObservableObject {
                 vaultKey: vaultKey,
                 revisions: rowSync.revisions
             )
+            rememberAttachmentCache(in: database)
             try store.save(database, name: databaseName, vaultKey: vaultKey)
             SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+            CredentialProviderIdentityStore.replace(with: database.activeCards)
+            return true
         } catch {
             Log.error("db", "save \"\(databaseName)\" failed: \(error)")
             AppToast.shared.show(error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Enables AutoFill on login cards in the current vault when explicitly requested at launch.
+    private func enableAutofillForCurrentVaultCredentials() {
+        guard phase == .unlocked else { return }
+        let credentialIDs = Set(database.activeCards.compactMap { card -> UUID? in
+            guard !card.login.isEmpty, !card.password.isEmpty else { return nil }
+            return card.id
+        })
+        let changedCount = database.cards.filter {
+            credentialIDs.contains($0.id) && !$0.autofillEnabled
+        }.count
+        guard changedCount > 0 else {
+            Log.info("autofill", "current vault batch enable completed: changed=0")
+            return
+        }
+
+        var updatedDatabase = database
+        let modifiedAt = Date().millis
+        for index in updatedDatabase.cards.indices
+        where credentialIDs.contains(updatedDatabase.cards[index].id)
+            && !updatedDatabase.cards[index].autofillEnabled {
+            updatedDatabase.cards[index].autofillEnabled = true
+            updatedDatabase.cards[index].modified = modifiedAt
+        }
+        database = updatedDatabase
+        guard save() else {
+            Log.error("autofill", "current vault batch enable failed: local save failed")
+            return
+        }
+        Log.info("autofill", "current vault batch enable completed: changed=\(changedCount)")
+        Task { [weak self] in
+            guard let self, self.phase == .unlocked else { return }
+            guard self.relay.binding(database: self.databaseName) != nil,
+                  self.relay.token(database: self.databaseName) != nil else { return }
+            _ = await self.sync(auto: true)
         }
     }
 
@@ -718,35 +907,19 @@ final class AppContext: ObservableObject {
         saveDebounce?.cancel()
         saveDebounce = Just(())
             .delay(for: .milliseconds(600), scheduler: RunLoop.main)
-            .sink { [weak self] _ in self?.save() }
+            .sink { [weak self] _ in _ = self?.save() }
     }
 
     // MARK: - Search (防抖输入,过滤逻辑在 AppContext+CardList)
 
-    /// 防抖间隔:停顿该时长后才把搜索文本应用到列表。
-    private static let searchDebounceInterval = Duration.milliseconds(200)
-
-    /// 搜索输入防抖器:逐键 setSearchText 只记录文本,停顿后一次性发布 searchQuery。
-    private lazy var searchDebouncer = SearchInputDebouncer(interval: Self.searchDebounceInterval) { [weak self] text in
-        guard let self, self.searchQuery != text else { return }
-        self.searchQuery = text
-        Log.info("ui", "search apply chars=\(text.count)")
-    }
-
     /// TextField 绑定入口:记录文本并重排防抖;清空立即生效(列表即时恢复)。
     func setSearchText(_ text: String) {
-        searchText = text
-        searchDebouncer.textChanged(text)
+        searchState.setText(text)
     }
 
     /// 清空搜索(搜索框 ✕ 按钮):立即生效,不等防抖。
     func clearSearch() {
-        guard !searchText.isEmpty || !searchQuery.isEmpty else { return }
-        searchText = ""
-        searchDebouncer.clear()
-        // searchText 非 @Published,手动通知一次以刷新搜索框显示
-        objectWillChange.send()
-        Log.info("ui", "search clear")
+        searchState.clear()
     }
 
     // MARK: - Auto-lock (LockedState + auto_lock_setting)

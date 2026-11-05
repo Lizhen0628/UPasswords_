@@ -10,8 +10,10 @@ extension AppContext {
 
     /// 按 UUID 新增或替换卡片，记录旧字段历史并安排延迟保存。
     ///
-    /// - Parameter card: 编辑完成的卡片值副本；本方法刷新修改时间并选中该卡。
-    func upsertCard(_ card: Card) {
+    /// - Parameters:
+    ///   - card: 编辑完成的卡片值副本。
+    ///   - selectAfterSave: 是否在保存后选中该卡片。
+    func upsertCard(_ card: Card, selectAfterSave: Bool = true) {
         var c = card
         c.modified = Date().millis
         let existed = database.cards.contains { $0.id == c.id }
@@ -19,8 +21,10 @@ extension AppContext {
         if let i = database.cards.firstIndex(where: { $0.id == c.id }) {
             // keep old values in field history
             for (j, f) in c.fields.enumerated() {
-                if let old = database.cards[i].fields.first(where: { $0.name == f.name && $0.type == f.type }) {
-                    c.fields[j].putHistoryValue(old.value, time: old.modifiedOr(c.modified))
+                let oldField = database.cards[i].fields.first { $0.id == f.id }
+                    ?? database.cards[i].fields.first { $0.name == f.name && $0.type == f.type }
+                if let oldField {
+                    c.fields[j].putHistoryValue(oldField.value, time: oldField.modifiedOr(c.modified))
                 }
             }
             checkChangedPasswords(on: c, against: database.cards[i])
@@ -29,7 +33,7 @@ extension AppContext {
             checkChangedPasswords(on: c, against: nil)
             database.cards.append(c)
         }
-        selectedCardId = c.id
+        if selectAfterSave { selectedCardId = c.id }
         saveDebounced()
         scheduleIconFetchAfterSave(cardId: c.id)
     }
@@ -153,7 +157,9 @@ extension AppContext {
             Log.warn("ui", "toggleFavorite id=\(id) skipped: card not found")
             return
         }
-        database.cards[i].favorite.toggle()
+        var updatedDatabase = database
+        updatedDatabase.cards[i].favorite.toggle()
+        database = updatedDatabase
         Log.info("ui", "toggleFavorite id=\(id) favorite=\(database.cards[i].favorite)")
         saveDebounced()
     }

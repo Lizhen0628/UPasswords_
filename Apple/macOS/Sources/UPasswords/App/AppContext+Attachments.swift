@@ -67,16 +67,133 @@ extension AppContext {
         guard isAttachmentSessionUnlocked else { return }
         do {
             let versions = AttachmentDownloadLedger.versions(in: database, cardID: cardID)
+            let missingVersions = Set(database.card(id: cardID).map(missingRemoteAttachmentVersions(in:)) ?? [])
             try updateAttachmentLedger { ledger in
                 for version in versions {
                     ledger.recordAccess(to: version)
-                    ledger.request(version, resetFailures: retryFailures)
+                    if missingVersions.contains(version) {
+                        ledger.request(version, resetFailures: retryFailures)
+                    }
                 }
             }
             enqueueAttachmentDownload(cardID: cardID, prioritized: true)
         } catch {
             reportAttachmentLedgerError(error)
         }
+    }
+
+    /// Loads already-cached content for the selected card without fetching unrelated files.
+    func loadCachedAttachments(cardID: UUID) {
+        guard phase == .unlocked, let vaultKey, let nativeStore,
+              let cardIndex = database.cards.firstIndex(where: { $0.id == cardID }) else { return }
+        let startedAt = Date()
+        var updated = database
+        var loadedCount = 0
+        var loadedBytes = 0
+        for attachmentIndex in updated.cards[cardIndex].images.indices {
+            loadCachedAttachment(
+                &updated.cards[cardIndex].images[attachmentIndex],
+                cardID: cardID,
+                vaultKey: vaultKey,
+                store: nativeStore,
+                loadedCount: &loadedCount,
+                loadedBytes: &loadedBytes
+            )
+        }
+        for attachmentIndex in updated.cards[cardIndex].files.indices {
+            loadCachedAttachment(
+                &updated.cards[cardIndex].files[attachmentIndex],
+                cardID: cardID,
+                vaultKey: vaultKey,
+                store: nativeStore,
+                loadedCount: &loadedCount,
+                loadedBytes: &loadedBytes
+            )
+        }
+        guard loadedCount > 0 else { return }
+        updateAttachmentContent(updated)
+        Log.info("db", "loaded local attachment cache cardId=\(cardID) count=\(loadedCount) bytes=\(loadedBytes) elapsedMs=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
+    }
+
+    /// Releases decoded attachment bytes after the selected card leaves the detail pane.
+    func releaseCachedAttachments(cardID: UUID) {
+        guard let cardIndex = database.cards.firstIndex(where: { $0.id == cardID }) else { return }
+        var updated = database
+        var releasedCount = 0
+        for attachmentIndex in updated.cards[cardIndex].images.indices {
+            releasedCount += discardCachedAttachment(
+                &updated.cards[cardIndex].images[attachmentIndex], cardID: cardID)
+        }
+        for attachmentIndex in updated.cards[cardIndex].files.indices {
+            releasedCount += discardCachedAttachment(
+                &updated.cards[cardIndex].files[attachmentIndex], cardID: cardID)
+        }
+        guard releasedCount > 0 else { return }
+        updateAttachmentContent(updated)
+        Log.info("db", "released local attachment memory cardId=\(cardID) count=\(releasedCount)")
+    }
+
+    func rememberAttachmentCache(in database: PasswordDatabase) {
+        for card in database.cards {
+            for attachment in card.images + card.files where attachment.data != nil {
+                let version = AttachmentDownloadLedger.Version(
+                    cardID: card.id,
+                    attachmentID: attachment.id,
+                    contentVersion: attachment.contentVersion
+                )
+                if let data = attachment.data {
+                    attachmentCacheBytes[version] = data.count
+                }
+            }
+        }
+    }
+
+    private func loadCachedAttachment(
+        _ attachment: inout Attachment,
+        cardID: UUID,
+        vaultKey: SymmetricKey,
+        store: SwiftDataVaultStore,
+        loadedCount: inout Int,
+        loadedBytes: inout Int
+    ) {
+        guard attachment.data == nil else { return }
+        let version = AttachmentDownloadLedger.Version(
+            cardID: cardID,
+            attachmentID: attachment.id,
+            contentVersion: attachment.contentVersion
+        )
+        guard attachmentCacheBytes[version] != nil else { return }
+        do {
+            guard let data = try store.loadAttachmentContent(
+                vaultName: databaseName,
+                cardID: cardID,
+                attachmentID: attachment.id,
+                contentVersion: attachment.contentVersion,
+                vaultKey: vaultKey
+            ) else {
+                attachmentCacheBytes.removeValue(forKey: version)
+                return
+            }
+            guard attachment.installDownloadedContent(data, for: attachment.contentVersion) else { return }
+            loadedCount += 1
+            loadedBytes += data.count
+        } catch {
+            attachmentCacheBytes.removeValue(forKey: version)
+            Log.error("db", "local attachment cache load failed cardId=\(cardID) attachmentId=\(attachment.id): \(error)")
+            AppToast.shared.show(error.localizedDescription)
+        }
+    }
+
+    private func discardCachedAttachment(_ attachment: inout Attachment, cardID: UUID) -> Int {
+        guard attachment.data != nil else { return 0 }
+        let version = AttachmentDownloadLedger.Version(
+            cardID: cardID,
+            attachmentID: attachment.id,
+            contentVersion: attachment.contentVersion
+        )
+        guard attachmentCacheBytes[version] != nil else { return 0 }
+        attachment.discardLocalContent()
+        return 1
     }
 
     /// Whether a stable attachment is protected from automatic local cache eviction.
@@ -104,7 +221,7 @@ extension AppContext {
     func attachmentDownloadStatusText(cardID: UUID) -> String? {
         guard let card = database.card(id: cardID), hasMissingAttachmentContent(card) else { return nil }
         if attachmentLedgerUnavailable { return L10n.t("attachment_download_state_error") }
-        let versions = AttachmentDownloadLedger.versions(in: database, cardID: cardID, missingOnly: true)
+        let versions = missingRemoteAttachmentVersions(in: card)
         for version in versions {
             guard let record = attachmentDownloadLedger?.records[version] else { continue }
             if record.isEvicted { return L10n.t("attachment_cache_evicted") }
@@ -129,6 +246,7 @@ extension AppContext {
 
     /// Cancels this session's work; durable retry limits and retention remain on disk.
     func cancelAttachmentDownloads() {
+        attachmentCacheBytes.removeAll()
         attachmentDownloadQueue.cancelInFlight()
         attachmentDownloadTask?.cancel()
         attachmentRetryTask?.cancel()
@@ -165,8 +283,7 @@ extension AppContext {
         guard isAttachmentSessionUnlocked, relayBound, !attachmentLedgerUnavailable,
               let card = database.card(id: cardID), hasMissingAttachmentContent(card),
               let ledger = attachmentDownloadLedger else { return }
-        let ready = AttachmentDownloadLedger.versions(in: database, cardID: cardID, missingOnly: true)
-            .contains { ledger.isReady($0) }
+        let ready = missingRemoteAttachmentVersions(in: card).contains { ledger.isReady($0) }
         guard ready else {
             setAttachmentDownloadState(.failed, cardID: cardID)
             return
@@ -198,8 +315,9 @@ extension AppContext {
                     try validateSyncSession(name: name, key: snapshotKey, sessionID: sessionID)
                     try await Task.sleep(for: .milliseconds(100))
                 }
-                let versions = AttachmentDownloadLedger.versions(in: database, cardID: cardID, missingOnly: true)
-                guard let version = versions.first(where: { attachmentDownloadLedger?.isReady($0) == true }) else {
+                guard let card = database.card(id: cardID),
+                      let version = missingRemoteAttachmentVersions(in: card)
+                        .first(where: { attachmentDownloadLedger?.isReady($0) == true }) else {
                     attachmentDownloadQueue.finish(cardID: cardID)
                     refreshAttachmentDownloadState(cardID: cardID)
                     continue
@@ -231,7 +349,11 @@ extension AppContext {
                 var current = database
                 if RowSync.installDownloadedAttachmentContent(data, for: version, into: &current) {
                     try commitSyncSnapshot(current, name: name, vaultKey: snapshotKey, state: rowSync)
-                    database = current
+                    updateAttachmentContent(current)
+                    attachmentCacheBytes[version] = data.count
+                    if selectedCardId != cardID {
+                        releaseCachedAttachments(cardID: cardID)
+                    }
                     SafariSnapshotBridge.push(databaseName: databaseName, store: store)
                     try updateAttachmentLedger {
                         $0.recordSuccess(for: version)
@@ -285,7 +407,8 @@ extension AppContext {
         guard let ledger = attachmentDownloadLedger else { throw RowSyncSafetyError.invalidResponse }
         let plan = try AttachmentCachePolicy.makePlan(
             database: database, state: rowSync, key: key, ledger: ledger,
-            incomingBytes: incomingBytes, protectedVersions: protecting)
+            incomingBytes: incomingBytes, protectedVersions: protecting,
+            cachedContentBytes: attachmentCacheBytes)
         guard plan.hasCapacity else { throw CocoaError(.fileWriteOutOfSpace) }
         let available = try store.root.resourceValues(forKeys: [.volumeAvailableCapacityKey])
             .volumeAvailableCapacity
@@ -303,7 +426,10 @@ extension AppContext {
                 contentVersion: version.contentVersion
             )
         }
-        database = plan.database
+        updateAttachmentContent(plan.database)
+        for version in plan.evictedVersions {
+            attachmentCacheBytes.removeValue(forKey: version)
+        }
         SafariSnapshotBridge.push(databaseName: databaseName, store: store)
         Log.info("sync", "attachment cache evicted versions=\(plan.evictedVersions.count) cachedBytes=\(plan.cachedBytes)")
     }
@@ -312,7 +438,13 @@ extension AppContext {
         attachmentRetryTask?.cancel()
         attachmentRetryTask = nil
         guard isAttachmentSessionUnlocked, relayBound, !attachmentLedgerUnavailable,
-              let retryAt = attachmentDownloadLedger?.nextRetry(in: database) else { return }
+              let ledger = attachmentDownloadLedger else { return }
+        let retryAt = database.cards
+            .flatMap(missingRemoteAttachmentVersions(in:))
+            .compactMap { ledger.records[$0]?.retryAt }
+            .filter { $0 > Date() }
+            .min()
+        guard let retryAt else { return }
         let name = databaseName
         let sessionID = syncSessionID
         let delay = max(0, retryAt.timeIntervalSinceNow)
@@ -349,6 +481,19 @@ extension AppContext {
     }
 
     private func hasMissingAttachmentContent(_ card: Card) -> Bool {
-        (card.images + card.files).contains { !$0.hasContent }
+        !missingRemoteAttachmentVersions(in: card).isEmpty
+    }
+
+    private func missingRemoteAttachmentVersions(in card: Card) -> [AttachmentDownloadLedger.Version] {
+        (card.images + card.files).compactMap { attachment in
+            guard !attachment.hasContent, attachment.hasPersistentID,
+                  attachment.hasPersistentContentVersion else { return nil }
+            let version = AttachmentDownloadLedger.Version(
+                cardID: card.id,
+                attachmentID: attachment.id,
+                contentVersion: attachment.contentVersion
+            )
+            return attachmentCacheBytes[version] == nil ? version : nil
+        }
     }
 }

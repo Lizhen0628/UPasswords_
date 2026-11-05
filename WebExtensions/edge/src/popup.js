@@ -41,7 +41,7 @@ import {
     fragmentsToXml,
     getVaultEnvelope,
     getVaultAttachment,
-    hostMatches,
+    itemMatchesPage,
     hostnameOf,
     listVaultConflicts,
     listVaultAttachmentVersions,
@@ -49,6 +49,7 @@ import {
     deleteVaultAttachment,
     listVaults,
     parseAutofillConflictGate,
+    parseSiteAssociation,
     parseVaultXml,
     inspectBackupArchive,
     openBackupRestoreDependencies,
@@ -99,6 +100,11 @@ const browser = {
 console.info("[upw] popup build: r7-click-probe");
 const zh = (navigator.language || "").toLowerCase().startsWith("zh");
 const t = (zhText, enText) => (zh ? zhText : enText);
+function siteMatchPlaceholder(mode) {
+    if (mode === "regex") return "^https://login\\.example\\.com/.*$";
+    if (mode === "wildcard") return "https://*.example.com/*";
+    return "https://example.com/login";
+}
 
 const SESSION_KEY = "relay.session"; // {token, expiresAt}
 const VAULT_KEY = "relay.vault";     // {id, name}
@@ -220,6 +226,7 @@ const suggestionSection = document.getElementById("suggestionSection");
 const settingsBox = document.getElementById("settingsBox");
 const newLoginFields = ["newLoginTitle", "newLoginUsername", "newLoginPassword", "newLoginUrl", "newLoginNotes"]
     .map(id => document.getElementById(id));
+const newLoginSiteMatch = document.getElementById("newLoginSiteMatch");
 const generatedInput = document.getElementById("generatedPassword");
 const settingsHeading = document.getElementById("settingsHeading");
 const navigation = document.getElementById("navigation");
@@ -277,6 +284,7 @@ const localCopyItemList = document.getElementById("localCopyItemList");
 const localCopyDetail = document.getElementById("localCopyDetail");
 const backupExportButton = document.getElementById("backupExportButton");
 const backupExportStatus = document.getElementById("backupExportStatus");
+const openLocalCopiesLoginButton = document.getElementById("openLocalCopiesLoginButton");
 const openLocalCopiesSettingsButton = document.getElementById("openLocalCopiesSettingsButton");
 const importLocalBackupButton = document.getElementById("importLocalBackupButton");
 const closeLocalBackupManagerButton = document.getElementById("closeLocalBackupManagerButton");
@@ -1300,12 +1308,21 @@ function renderCandidates(items) {
             && (filter !== "favorites" || item.favorite === true)
             && (filter !== "current" || (isPersonalInfoItem(item)
                 ? registrationForm && canFillPersonalInfo(item)
-                : Boolean(host && hostMatches(host, item.host))))
+                : Boolean(host && itemMatchesPage(pageUrl, item))))
             && (!query || item.title.toLocaleLowerCase().includes(query)
                 || username.toLocaleLowerCase().includes(query)
                 || item.host.toLocaleLowerCase().includes(query)))
-        .sort((left, right) => left.item.title.localeCompare(right.item.title)
-            * (sortItems.value === "title-desc" ? -1 : 1));
+        .sort((left, right) => {
+            const leftMatches = isPersonalInfoItem(left.item)
+                ? registrationForm && canFillPersonalInfo(left.item)
+                : left.item.autofillEnabled !== false && Boolean(host && itemMatchesPage(pageUrl, left.item));
+            const rightMatches = isPersonalInfoItem(right.item)
+                ? registrationForm && canFillPersonalInfo(right.item)
+                : right.item.autofillEnabled !== false && Boolean(host && itemMatchesPage(pageUrl, right.item));
+            return Number(rightMatches) - Number(leftMatches)
+                || left.item.title.localeCompare(right.item.title)
+                    * (sortItems.value === "title-desc" ? -1 : 1);
+        });
     suggestionSection.hidden = true;
     resultCount.textContent = String(candidates.length);
     emptyState.hidden = candidates.length > 0;
@@ -1330,9 +1347,9 @@ function appendCandidate(candidate, list) {
     li.dataset.itemId = candidate.item.id;
     const button = document.createElement("button");
     button.type = "button";
-    const canFill = isPersonalInfoItem(candidate.item)
+    const canFill = candidate.item.autofillEnabled !== false && (isPersonalInfoItem(candidate.item)
         ? registrationForm && canFillPersonalInfo(candidate.item)
-        : Boolean(host && hostMatches(host, candidate.item.host));
+        : Boolean(host && itemMatchesPage(pageUrl, candidate.item)));
     const avatar = document.createElement("span");
     avatar.className = "item-avatar";
     avatar.setAttribute("aria-hidden", "true");
@@ -1422,49 +1439,24 @@ async function copyText(value) {
 }
 
 
-async function quickFillCurrentSite() {
-    console.info("[upw] site banner quick fill requested");
-    status(t("正在查找当前网站的匹配项…", "Finding a matching item for this site…"));
-    try {
-        const state = await sessionCommand("read");
-        if (!state.unlocked || state.generation !== unlockedGeneration) {
-            await render();
-            status(t("密码库已锁定，请重新解锁后重试。", "Your vault is locked. Unlock it again and retry."), true);
-            return;
-        }
-        const currentItems = state.items ?? [];
-        const candidatesFor = items => items
-            .filter(item => hostMatches(host, item.host) && Boolean(credentialsOf(item).password))
-            .map(item => ({ item, ...credentialsOf(item) }))
-            .sort((left, right) => left.item.title.localeCompare(right.item.title)
-                * (sortItems.value === "title-desc" ? -1 : 1));
-        const candidates = candidatesFor(unlockedItems ?? currentItems);
-        const candidate = candidates[0] ?? candidatesFor(currentItems)[0];
-        if (!candidate) {
-            const hostMatchesCount = currentItems.filter(item => hostMatches(host, item.host)).length;
-            const passwordItemCount = currentItems.filter(item => Boolean(credentialsOf(item).password)).length;
-            console.warn("[upw] site banner quick fill unavailable:", {
-                sessionItems: currentItems.length,
-                hostMatches: hostMatchesCount,
-                passwordItems: passwordItemCount,
-            });
-            status(t("当前解锁会话中没有找到此网站的密码项。请重新同步密码库；若仍不行，请检查条目中的网站地址和密码字段。", "No password entry for this site was found in the current unlocked session. Sync the vault, then check the item's website and password field if needed."), true);
-            return;
-        }
-        const row = [...itemsEl.children].find(element => element.dataset.itemId === candidate.item.id) ?? null;
-        await fill(candidate, row);
-    } catch {
-        console.warn("[upw] site banner quick fill failed: session unavailable");
-        status(t("无法读取密码库，请重新打开扩展后重试。", "Could not read the vault. Reopen the extension and try again."), true);
-    }
+async function showCurrentSiteItems() {
+    if (!host) return;
+    console.info("[upw] current-site filter selected");
+    siteFilter.value = "current";
+    searchInput.value = "";
+    await render();
 }
 
 /** 在点击时重新确认当前页面与会话有效性，只注入本次填充所需字段。 */
 async function fill(candidate, li) {
     const profile = isPersonalInfoItem(candidate.item);
+    if (!profile && candidate.item.autofillEnabled === false) {
+        status(t("此条目已关闭自动填充。", "Autofill is disabled for this item."), true);
+        return;
+    }
     if (!tab?.id || !/^https?:\/\//i.test(pageUrl)
         || (profile ? !registrationForm || !canFillPersonalInfo(candidate.item)
-            : !hostMatches(host, candidate.item.host))) {
+            : !itemMatchesPage(pageUrl, candidate.item))) {
         console.warn("[upw] fill skipped: page context not fillable");
         status(t("当前页面不可填充，请重新打开扩展后重试。", "This page cannot be filled. Reopen the extension and try again."), true);
         return;
@@ -1484,7 +1476,7 @@ async function fill(candidate, li) {
         const current = state.items?.find(item => item.id === candidate.item.id);
         if (!current || (profile
             ? !canFillPersonalInfo(current) || !registrationForm
-            : !hostMatches(host, current.host))) {
+            : current.autofillEnabled === false || !itemMatchesPage(pageUrl, current))) {
             console.warn("[upw] fill aborted: item missing or host mismatch in session");
             status(t("条目已变化或与当前网站不匹配，请刷新后重试。", "The item changed or no longer matches this site. Refresh and try again."), true);
             return;
@@ -2386,6 +2378,8 @@ async function openNewLogin(password = "") {
     newLoginFields[0].value = host;
     newLoginFields[2].value = password;
     newLoginFields[3].value = /^https?:\/\//i.test(pageUrl) ? new URL(pageUrl).origin : "";
+    newLoginSiteMatch.value = "domain";
+    newLoginFields[3].placeholder = siteMatchPlaceholder(newLoginSiteMatch.value);
     newLoginDirty = Boolean(password);
     newLoginFields[0].focus();
     console.info("[upw] new login opened");
@@ -2396,12 +2390,13 @@ async function createNewLogin() {
         || currentView !== "new-login" || unlockedItems === null) return;
     const [titleInput, usernameInput, passwordField, urlInput, notesInput] = newLoginFields;
     const draft = { id: newLoginId ?? crypto.randomUUID(), title: titleInput.value.trim(),
-        username: usernameInput.value, password: passwordField.value, url: urlInput.value.trim(), notes: notesInput.value };
+        username: usernameInput.value, password: passwordField.value, url: urlInput.value.trim(),
+        siteMatch: newLoginSiteMatch.value, notes: notesInput.value };
     newLoginId = draft.id;
     const masterPassword = document.getElementById("newLoginMasterPassword");
     let authorization = masterPassword.value;
     masterPassword.value = "";
-    if (!draft.title || (draft.url && !safeWebsiteUrl(draft.url))) {
+    if (!draft.title || (draft.url && !parseSiteAssociation({ url: draft.url, mode: draft.siteMatch }))) {
         status(t("请输入标题及有效的 HTTP(S) 网站地址（可留空）。", "Enter a title and a valid HTTP(S) website URL, or leave the URL empty."), true);
         authorization = "";
         return;
@@ -2543,6 +2538,7 @@ async function createNewLogin() {
 
 function clearNewLoginForm() {
     for (const input of newLoginFields) { input.value = ""; input.readOnly = false; }
+    newLoginSiteMatch.value = "domain";
     document.getElementById("newLoginMasterPassword").value = "";
     document.getElementById("createLoginSaveButton").disabled = false;
     newLoginDirty = false;
@@ -2550,6 +2546,11 @@ function clearNewLoginForm() {
     newLoginUncertain = false;
     newLoginId = null;
 }
+
+newLoginSiteMatch.addEventListener("change", () => {
+    newLoginDirty = true;
+    newLoginFields[3].placeholder = siteMatchPlaceholder(newLoginSiteMatch.value);
+});
 
 // MARK: - 状态渲染
 
@@ -3786,9 +3787,9 @@ for (const control of [siteFilter, sortItems]) control.addEventListener("change"
     listScrollTop = 0;
     if (unlockedItems !== null) renderCandidates(unlockedItems);
 });
-// 站点横幅快速填充:从解锁会话重新解析匹配项,不依赖当前渲染列表/筛选状态
+// 点击当前网站提示后显示所有匹配项,由用户明确选择要填充的账号
 document.getElementById("siteContext").addEventListener("click", () => {
-    void quickFillCurrentSite();
+    void showCurrentSiteItems();
 });
 document.getElementById("newLoginButton").addEventListener("click", () => openNewLogin());
 document.getElementById("emptyNewLoginButton").addEventListener("click", () => openNewLogin());
@@ -4702,6 +4703,7 @@ async function touchSession() {
 document.getElementById("downloadAllAttachmentsButton").addEventListener("click", () => { void downloadAllAttachments(); });
 document.getElementById("endDownloadAllAttachmentsButton").addEventListener("click", () => { void endDownloadAllAttachments(); });
 backupExportButton.addEventListener("click", () => { void exportPortableBackup(); });
+openLocalCopiesLoginButton.addEventListener("click", () => { void openLocalBackupManager(); });
 openLocalCopiesSettingsButton.addEventListener("click", () => { void openLocalBackupManager(); });
 importLocalBackupButton.addEventListener("click", chooseLocalBackupFile);
 localBackupFileInput.addEventListener("change", beginLocalBackupRestore);

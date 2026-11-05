@@ -1,6 +1,6 @@
-// 职责：观察当前顶层 HTTP(S) 页面的表单并展示候选数量提示。
-// 页面可见消息不含字段值；实际填充由用户打开可信 popup 后主动触发。
-// Pages receive only a match count and profile-availability flag. Values are filled only by the trusted popup.
+// 职责：观察当前顶层 HTTP(S) 页面的登录表单并展示用户主动请求的站点候选。
+// 页面脚本永不读取凭据；用户点选后仅扩展隔离环境接收单条凭据并写入当前表单。
+// Page-world scripts never receive credentials; selection and filling stay in the isolated extension context.
 (function () {
     "use strict";
     const api = globalThis.browser ?? globalThis.chrome;
@@ -13,6 +13,7 @@
     const HINT_WIDTH = 280;
     const HINT_HEIGHT = 80;
     const ownedHosts = new WeakSet();
+    const wiredUsernameFields = new WeakSet();
     const popupURL = api.runtime.getURL("src/popup.html");
     const chinese = /^zh/i.test(document.documentElement.lang || navigator.language || "en");
     let host = null;
@@ -24,6 +25,10 @@
     let sequence = 0;
     let debounce = null;
     let pageHref = location.href;
+    let focusedUsername = null;
+    let dismissedUsername = null;
+    let candidateSequence = 0;
+    let candidateList = null;
 
     function isVisible(field) {
         if (field.type === "hidden" || field.disabled || field.readOnly || field.getClientRects().length === 0) return false;
@@ -39,6 +44,7 @@
 
     function loginFields() {
         const inputs = Array.from(document.querySelectorAll("input")).filter(isVisible);
+        if (registrationFields()) return null;
         const passwords = inputs.filter((field) => field.type.toLowerCase() === "password");
         const password = passwords.find((field) => field.autocomplete === "current-password")
             || (passwords.length === 1 && passwords[0].autocomplete !== "new-password" ? passwords[0] : null);
@@ -46,12 +52,22 @@
             const scope = password.form || password.closest('[role="form"]') || password.parentElement;
             const nearby = inputs.filter((field) => scope?.contains(field));
             const username = nearby.find((field) => field.autocomplete === "username")
-                || nearby.find((field) => /^(email|text|tel)$/.test(field.type));
+                || nearby.find((field) => /^(email|text|tel)$/.test(field.type)
+                    && field.autocomplete !== "off");
             return { password, username, anchor: password };
         }
-        // Username-first sign-in steps must explicitly identify a username and a form.
-        const username = inputs.find((field) => field.autocomplete === "username" && field.form
-            && !field.form.querySelector('input[type="password"], input[autocomplete="new-password"]'));
+        // Username-first sign-in may keep a current-password field hidden between steps.
+        const username = inputs.find((field) => field.autocomplete === "username" && field.form);
+        const scope = username?.form || username?.closest('[role="form"]') || username?.parentElement;
+        const scopedInputs = Array.from(document.querySelectorAll("input")).filter((field) => scope?.contains(field));
+        const hasNewPassword = scopedInputs.some((field) => autocompleteToken(field) === "new-password");
+        const hasUnclassifiedHiddenPassword = scopedInputs.some((field) => {
+            return (field.type ?? "").toLowerCase() === "password" && !isVisible(field)
+                && autocompleteToken(field) !== "current-password";
+        });
+        const hasVisiblePassword = inputs.some((field) => scope?.contains(field)
+            && (field.type ?? "").toLowerCase() === "password");
+        if (hasNewPassword || hasUnclassifiedHiddenPassword || hasVisiblePassword) return null;
         return username ? { username, password: null, anchor: username } : null;
     }
 
@@ -87,6 +103,7 @@
         host = null;
         button = null;
         fallback = null;
+        candidateList = null;
         anchor = null;
         renderedState = "";
         position = "";
@@ -95,8 +112,9 @@
     function reposition() {
         if (!host || !anchor) return;
         const rect = anchor.getBoundingClientRect();
+        const height = host.getBoundingClientRect().height || HINT_HEIGHT;
         const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - HINT_WIDTH - VIEWPORT_MARGIN));
-        const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.bottom + HINT_GAP, window.innerHeight - HINT_HEIGHT));
+        const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.bottom + HINT_GAP, window.innerHeight - height - VIEWPORT_MARGIN));
         const next = `${left}:${top}`;
         if (position === next) return;
         position = next;
@@ -114,11 +132,17 @@
             host.style.cssText = "all:initial;position:fixed;z-index:2147483647;max-width:280px;";
             const shadow = host.attachShadow({ mode: "closed" });
             const style = document.createElement("style");
-            style.textContent = ":host{font:12px/1.4 system-ui,sans-serif;color-scheme:light dark}button{font:inherit;font-weight:600;color:#2f6cc0;background:#fff;border:1px solid #cfdff2;border-radius:10px;padding:7px 12px;cursor:pointer;max-width:280px;text-align:start;box-shadow:0 4px 14px rgb(31 68 120/.14)}button:focus-visible{outline:2px solid #3f7fd4;outline-offset:2px}p{font:inherit;color:#2f6cc0;background:#fff;border:1px solid #cfdff2;border-radius:10px;padding:7px 11px;margin:4px 0 0;max-width:260px;box-shadow:0 4px 14px rgb(31 68 120/.12)}@media(prefers-color-scheme:dark){button,p{color:#8fbcee;background:#2b2c28;border-color:#465870}button{box-shadow:0 4px 14px rgb(0 0 0/.4)}}";
+            style.textContent = ":host{font:12px/1.4 system-ui,sans-serif;color-scheme:light dark}button{font:inherit;font-weight:600;color:#2f6cc0;background:#fff;border:1px solid #cfdff2;border-radius:8px;padding:7px 12px;cursor:pointer;max-width:280px;text-align:start;box-shadow:0 4px 14px rgb(31 68 120/.14)}button:focus-visible{outline:2px solid #3f7fd4;outline-offset:2px}#candidateList[hidden]{display:none!important}#candidateList button{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#candidateList button:disabled{opacity:.6;cursor:wait}p{font:inherit;color:#2f6cc0;background:#fff;border:1px solid #cfdff2;border-radius:8px;padding:7px 11px;margin:4px 0 0;max-width:260px;box-shadow:0 4px 14px rgb(31 68 120/.12)}@media(prefers-color-scheme:dark){button,p{color:#8fbcee;background:#2b2c28;border-color:#465870}button{box-shadow:0 4px 14px rgb(0 0 0/.4)}}";
             button = document.createElement("button");
             button.type = "button";
             fallback = document.createElement("p");
             fallback.hidden = true;
+            candidateList = document.createElement("div");
+            candidateList.id = "candidateList";
+            candidateList.setAttribute("role", "listbox");
+            candidateList.setAttribute("aria-label", chinese ? "匹配账号" : "Matching accounts");
+            candidateList.hidden = true;
+            candidateList.style.cssText = "all:initial;display:flex;flex-direction:column;gap:2px;margin-top:4px;max-width:280px;";
             button.addEventListener("click", async (event) => {
                 if (!event.isTrusted) return;
                 const currentHost = host;
@@ -133,7 +157,13 @@
                 fallback.textContent = chinese ? "请点击浏览器工具栏中的 UPasswords 图标。" : "Click the UPasswords icon in your browser toolbar.";
                 fallback.hidden = false;
             });
-            shadow.append(style, button, fallback);
+            button.addEventListener("keydown", (event) => {
+                if (event.key === "ArrowDown" && candidateList && !candidateList.hidden) {
+                    event.preventDefault();
+                    candidateList.querySelector("button")?.focus();
+                }
+            });
+            shadow.append(style, button, candidateList, fallback);
             document.documentElement.append(host);
         }
         const state = `${count}:${profileAvailable}`;
@@ -149,6 +179,104 @@
             console.info("[upw] site hint updated");
         }
         reposition();
+    }
+
+    function hideCandidates() {
+        candidateSequence++;
+        focusedUsername = null;
+        if (!candidateList) return;
+        candidateList.replaceChildren();
+        candidateList.hidden = true;
+        position = "";
+        reposition();
+    }
+
+    async function loadCandidates(field) {
+        const request = ++candidateSequence;
+        focusedUsername = field;
+        try {
+            const response = await api.runtime.sendMessage({ type: "site-candidates" });
+            const current = loginFields();
+            if (request !== candidateSequence || focusedUsername !== field
+                || (current?.username !== field && current?.password !== field)
+                || response?.type !== "site-candidates" || !Array.isArray(response.candidates)
+                || !host || !candidateList) return;
+            candidateList.replaceChildren();
+            const candidates = response.candidates.filter((candidate) => candidate
+                && typeof candidate.id === "string" && typeof candidate.title === "string"
+                && typeof candidate.username === "string").slice(0, 8);
+            for (const candidate of candidates) {
+                const option = document.createElement("button");
+                option.type = "button";
+                option.setAttribute("role", "option");
+                option.textContent = candidate.username
+                    ? `${candidate.title} · ${candidate.username}` : candidate.title;
+                option.addEventListener("keydown", (event) => {
+                    const options = Array.from(candidateList.children);
+                    const index = options.indexOf(option);
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        options[index + (event.key === "ArrowDown" ? 1 : -1)]?.focus();
+                    } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        dismissedUsername = field;
+                        hideCandidates();
+                        field.focus();
+                    }
+                });
+                option.addEventListener("pointerdown", (event) => event.preventDefault());
+                option.addEventListener("click", async (event) => {
+                    if (!event.isTrusted) return;
+                    if (location.protocol === "http:" && !window.confirm(chinese
+                        ? "此页面使用不安全的 HTTP 连接。仍要填充密码吗？"
+                        : "This page uses an insecure HTTP connection. Fill the password anyway?")) return;
+                    option.disabled = true;
+                    try {
+                        const result = await api.runtime.sendMessage({
+                            type: "select-site-item",
+                            itemID: candidate.id,
+                        });
+                        const current = loginFields();
+                        if (result?.type === "site-fill-candidate" && result.expectedOrigin === location.origin
+                            && current && (current.username === focusedUsername || current.password === focusedUsername)) {
+                            const usernameFilled = setField(current.username, result.username);
+                            const passwordFilled = setField(current.password, result.password);
+                            if (usernameFilled || passwordFilled) {
+                                console.info("[upw] selected account filled");
+                                removeHint();
+                                return;
+                            }
+                        }
+                        if (result?.type === "site-fill-rejected") {
+                            fallback.textContent = result.reason === "conflict"
+                                ? (chinese ? "此账号有待处理的同步冲突，请先在 UPasswords 中处理。" : "This account has unresolved sync conflicts. Resolve them in UPasswords first.")
+                                : result.reason === "conflicts_unavailable"
+                                    ? (chinese ? "无法确认账号同步状态，请打开 UPasswords 并联网刷新。" : "Account sync status could not be checked. Open UPasswords and refresh while online.")
+                                    : (chinese ? "无法填充此账号，请打开 UPasswords 查看状态。" : "This account could not be filled. Open UPasswords to check its status.");
+                            fallback.hidden = false;
+                            option.disabled = false;
+                            return;
+                        }
+                    } catch {
+                        console.warn("[upw] site candidate selection unavailable");
+                    }
+                    option.disabled = false;
+                    if (fallback) {
+                        fallback.textContent = chinese
+                            ? "无法打开填充会话。请点击工具栏中的 UPasswords 图标后重试。"
+                            : "Could not start the fill session. Click the UPasswords toolbar icon and retry.";
+                        fallback.hidden = false;
+                    }
+                });
+                candidateList.append(option);
+            }
+            candidateList.hidden = candidates.length === 0;
+            anchor = field;
+            position = "";
+            reposition();
+        } catch {
+            if (request === candidateSequence) hideCandidates();
+        }
     }
 
     async function refresh() {
@@ -176,7 +304,9 @@
                 removeHint();
                 return;
             }
-            showHint(response.count, currentRegistration?.anchor ?? current?.anchor, Boolean(response.profileAvailable));
+            const activeAnchor = focusedUsername && current?.username === focusedUsername
+                ? focusedUsername : currentRegistration?.anchor ?? current?.anchor;
+            showHint(response.count, activeAnchor, Boolean(response.profileAvailable));
         } catch {
             if (request === sequence) removeHint();
         }
@@ -257,6 +387,35 @@
     observer.observe(document.documentElement, {
         childList: true, subtree: true, attributes: true,
         attributeFilter: ["type", "autocomplete", "hidden", "style", "class", "disabled", "readonly"],
+    });
+    document.addEventListener("focusin", (event) => {
+        const target = event.target;
+        if (host && (target === host || host.contains(target))) return;
+        const fields = loginFields();
+        if (fields?.username === target || fields?.password === target) {
+            focusedUsername = target;
+            if (!wiredUsernameFields.has(target)) {
+                wiredUsernameFields.add(target);
+                target.addEventListener("keydown", (keyEvent) => {
+                    if (keyEvent.key !== "ArrowDown" || !candidateList) return;
+                    keyEvent.preventDefault();
+                    if (candidateList.hidden) {
+                        dismissedUsername = null;
+                        void loadCandidates(target);
+                        return;
+                    }
+                    candidateList.querySelector("button")?.focus();
+                });
+            }
+            if (dismissedUsername === target) return;
+            dismissedUsername = null;
+            void refresh().then(() => loadCandidates(target));
+        } else if (focusedUsername) {
+            hideCandidates();
+        }
+    });
+    document.addEventListener("focusout", (event) => {
+        if (event.target === dismissedUsername && event.relatedTarget !== host) dismissedUsername = null;
     });
     window.addEventListener("popstate", schedule);
     window.addEventListener("hashchange", schedule);

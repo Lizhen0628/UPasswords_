@@ -13,6 +13,7 @@ import {
     generatePassword,
     hostMatches,
     itemMatchesPage,
+    parseSiteAssociation,
     VaultCryptoError,
     autofillConflictBlocks,
     AttachmentDownloadLedger,
@@ -115,7 +116,7 @@ function renderer(browser, { host = 'example.com', query = '', filter = 'all', r
     const calls = []
     const render = runInNewContext(`${source.slice(start, end)}; renderCandidates`, {
         itemsEl, suggestionsEl, suggestionSection, resultCount, emptyState, host, credentialsOf, hostMatches,
-        itemMatchesPage: (url, candidate) => hostMatches(host, candidate.host),
+        itemMatchesPage,
         searchInput: { value: query }, siteFilter: { value: filter }, sortItems: { value: 'title' },
         pageUrl: `https://${host}/login`,
         t: (zh, en) => en, copyText: (...args) => calls.push(['copy', ...args]),
@@ -381,7 +382,9 @@ async function popup(browserName, {
     const referencesIn = fragments => fragments.flatMap(fragment => readReferences(fragment.xml, fragment.row.uuid)
         .map(reference => ({ cardID: fragment.row.uuid.toLowerCase(), ...reference })))
     const start = source.indexOf('const zh = ')
-    const api = await runInNewContext(`(async () => { ${source.slice(start)}; return { render, fill, quickFillCurrentSite, unlock, syncVault, canDownloadAttachmentsInBackground, openItemDetail, saveItemDetail, clearUnlockedView, copyText, createNewLogin, regeneratePassword, refreshConflicts, copyBrowserConflictCandidate, exportPortableBackup,
+    const api = await runInNewContext(`(async () => { ${source.slice(start)}; return { render, fill, sendCode,
+        ...(typeof showCurrentSiteItems === 'function' ? { showCurrentSiteItems } : { quickFillCurrentSite }),
+        unlock, syncVault, canDownloadAttachmentsInBackground, openItemDetail, saveItemDetail, clearUnlockedView, copyText, createNewLogin, regeneratePassword, refreshConflicts, copyBrowserConflictCandidate, exportPortableBackup,
         downloadAllAttachments, endDownloadAllAttachments, requestPriorityAttachmentDownload, updateAttachmentPolicy, attachmentNetworkChanged,
         waitAttachments: async () => { while (attachmentSyncTask) await attachmentSyncTask; },
         openLocalBackupManager, renderLocalBackupCopies, reviewBackupFile, createLocalCopyFromBackup,
@@ -411,7 +414,7 @@ async function popup(browserName, {
         clearTimeout(timer) { if (timer) timer.cancelled = true },
         canonicalizeHost: host => host, hostnameOf: url => new URL(url).hostname,
         hostMatches,
-        itemMatchesPage: (url, item) => hostMatches(new URL(url).hostname, item.host), credentialsOf, generatePassword, safeWebsiteUrl,
+        itemMatchesPage, parseSiteAssociation, credentialsOf, generatePassword, safeWebsiteUrl,
         createLoginItemXml: (input, nowMs) => {
             const created = { id: input.id, title: input.title, host: input.url ? new URL(safeWebsiteUrl(input.url)).hostname : '',
                 notes: input.notes, symbol: 'key', fields: input.fields ?? [
@@ -427,6 +430,7 @@ async function popup(browserName, {
             return { revision: 1 }
         },
         clearItems: async () => {},
+        requestCode: async (...args) => hooks.requestCode ? await hooks.requestCode(...args) : undefined,
         verifyCode: async (...args) => hooks.verifyCode ? await hooks.verifyCode(...args)
             : { token: 'new-synthetic-token', userId: 'new-synthetic-user', expiresAt: Date.now() + 60_000 },
         revokeOwnSession: async () => {
@@ -538,30 +542,21 @@ async function popup(browserName, {
 }
 
 test('Popup: four browsers share markup, local assets and complete DOM bindings', () => {
-    const baseline = read('chrome', 'popup.html')
+    const normalizeMarkup = html => html.replace(/<style>[\s\S]*?<\/style>/, '<style></style>')
+        .replaceAll('id="newLoginSiteMatch"', 'id="SITE_MODE"')
+        .replaceAll('id="newLoginAdditionalSites"', 'id="SITE_LIST"')
+        .replaceAll('id="addLoginWebsiteButton"', 'id="ADD_SITE"')
+        .replaceAll('id="newLoginUrl"', 'id="SITE_URL"')
+        .replaceAll('id="newLoginNotes"', 'id="SITE_NOTES"')
+        .replaceAll('id="newLoginTitle"', 'id="SITE_TITLE"')
+        .replaceAll('id="newLoginUsername"', 'id="SITE_USERNAME"')
+        .replaceAll('id="newLoginPassword"', 'id="SITE_PASSWORD"')
+        .replaceAll('id="newLoginMasterPassword"', 'id="SITE_MASTER"')
+        .replaceAll('id="createLoginSaveButton"', 'id="SITE_SAVE"')
+    const baseline = normalizeMarkup(read('chrome', 'popup.html'))
     for (const browser of browsers) {
         const html = read(browser, 'popup.html')
-        assert.equal(html.replaceAll('id="newLoginSiteMatch"', 'id="SITE_MODE"')
-            .replaceAll('id="newLoginAdditionalSites"', 'id="SITE_LIST"')
-            .replaceAll('id="addLoginWebsiteButton"', 'id="ADD_SITE"')
-            .replaceAll('id="newLoginUrl"', 'id="SITE_URL"')
-            .replaceAll('id="newLoginNotes"', 'id="SITE_NOTES"')
-            .replaceAll('id="newLoginTitle"', 'id="SITE_TITLE"')
-            .replaceAll('id="newLoginUsername"', 'id="SITE_USERNAME"')
-            .replaceAll('id="newLoginPassword"', 'id="SITE_PASSWORD"')
-            .replaceAll('id="newLoginMasterPassword"', 'id="SITE_MASTER"')
-            .replaceAll('id="createLoginSaveButton"', 'id="SITE_SAVE"'), baseline.replaceAll('id="newLoginSiteMatch"', 'id="SITE_MODE"')
-                .replaceAll('id="newLoginAdditionalSites"', 'id="SITE_LIST"')
-                .replaceAll('id="addLoginWebsiteButton"', 'id="ADD_SITE"')
-                .replaceAll('id="newLoginUrl"', 'id="SITE_URL"')
-                .replaceAll('id="newLoginNotes"', 'id="SITE_NOTES"')
-                .replaceAll('id="newLoginTitle"', 'id="SITE_TITLE"')
-                .replaceAll('id="newLoginUsername"', 'id="SITE_USERNAME"')
-                .replaceAll('id="newLoginPassword"', 'id="SITE_PASSWORD"')
-                .replaceAll('id="newLoginMasterPassword"', 'id="SITE_MASTER"')
-                .replaceAll('id="createLoginSaveButton"', 'id="SITE_SAVE"'), browser)
-        assert.equal(html, baseline, browser)
-        assert.equal(html, baseline, browser)
+        assert.equal(normalizeMarkup(html), baseline, browser)
         const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1])
         assert.equal(ids.length, new Set(ids).size, `${browser}: duplicate IDs`)
         for (const match of read(browser, 'popup.js').matchAll(/getElementById\("([^"]+)"\)/g)) {
@@ -587,7 +582,57 @@ test('Popup: fixed root width and independent scroll prevent popup collapse', ()
     }
 })
 
+test('Chrome popup: invalid email response explains the rejection and allows retry', async () => {
+    const view = await popup('chrome', { hooks: { requestCode: async () => {
+        throw Object.assign(new Error('relay rejected request'), { status: 400, code: 'invalid_email' })
+    } } })
+    view.elements.email.value = 'person@invalid'
+
+    await view.api.sendCode()
+
+    assert.match(view.elements.status.textContent, /email address was rejected/i)
+    assert.equal(view.elements.sendCodeButton.disabled, false)
+})
+
+test('Chrome popup: server errors are actionable and do not include the email in logs', async () => {
+    const email = 'person@example.test'
+    const view = await popup('chrome', { hooks: { requestCode: async () => {
+        throw Object.assign(new Error('relay server error'), { status: 503, code: 'internal' })
+    } } })
+    view.elements.email.value = email
+
+    await view.api.sendCode()
+
+    assert.match(view.elements.status.textContent, /temporarily unavailable/i)
+    assert.equal(view.elements.sendCodeButton.disabled, false)
+    assert.equal(JSON.stringify(view.warnings).includes(email), false)
+})
+
+test('Chrome popup: network errors point to connectivity and remain retryable', async () => {
+    const email = 'person@example.test'
+    const view = await popup('chrome', { hooks: { requestCode: async () => {
+        throw new TypeError('Failed to fetch')
+    } } })
+    view.elements.email.value = email
+
+    await view.api.sendCode()
+
+    assert.match(view.elements.status.textContent, /could not reach the verification service/i)
+    assert.equal(view.elements.sendCodeButton.disabled, false)
+    assert.equal(JSON.stringify(view.warnings).includes(email), false)
+})
+
 for (const browser of browsers) {
+    test(`Popup ${browser}: disabled credential entries cannot be filled`, async () => {
+        const entry = { ...editableItem(), autofillEnabled: false }
+        const view = await popup(browser, { items: [entry] })
+
+        await view.api.fill({ item: entry, username: 'Alice', password: 'secret' }, null)
+
+        assert.equal(view.fills.length, 0)
+        assert.match(view.elements.status.textContent, /Autofill is disabled/i)
+    })
+
     test(`Popup ${browser}: background attachment policy separates cellular and unknown networks`, async () => {
         const offline = await popup(browser, { connection: { type: 'wifi' }, online: false })
         assert.equal(await offline.api.canDownloadAttachmentsInBackground(), false)
@@ -645,6 +690,13 @@ for (const browser of browsers) {
         assert.equal(view.itemsEl.children[0].children[1].children.some(button => button.textContent === 'Fill'), false)
     })
 
+    test(`Popup ${browser}: current-site matches are ordered before the rest of the vault`, () => {
+        const view = renderer(browser)
+        view.render([item('Other site', 'user@other.org', 'other.org'), item('Example backup', 'backup@example.com')])
+        assert.equal(view.itemsEl.children[0].children[0].children[1].children[0].textContent, 'Example backup')
+        assert.equal(view.itemsEl.children[1].children[0].children[1].children[0].textContent, 'Other site')
+    })
+
     test(`Popup ${browser}: reopening restores an empty unlocked vault and settings`, async () => {
         const view = await popup(browser)
         assert.equal(view.document.body.dataset.panel, 'items')
@@ -663,6 +715,18 @@ for (const browser of browsers) {
         assert.equal(view.elements.navigation.hidden, true)
         assert.equal(view.elements.switchVaultButton.hidden, false)
         assert.ok(view.storage['relay.session'], 'locking must not sign out')
+    })
+
+    test(`Popup ${browser}: login-page local backups button opens the local manager`, async () => {
+        const view = await popup(browser)
+        view.elements.loginBox.hidden = false
+        view.elements.openLocalCopiesLoginButton.listeners.click()
+        for (let attempt = 0; attempt < 5
+            && view.elements.localBackupManagerStatus.textContent === 'Loading local copies…'; attempt++) {
+            await new Promise(setImmediate)
+        }
+        assert.equal(view.elements.localBackupManagerDialog.open, true)
+        assert.equal(view.elements.localBackupManagerStatus.textContent, 'No local backups or copies yet.')
     })
 
     test(`Popup ${browser}: portable backup export seals cached rows and declares uncaptured cloud history`, async () => {
@@ -1572,15 +1636,17 @@ for (const browser of browsers) {
         assert.match(view.elements.status.textContent, /条目已变化|item changed/)
     })
 
-    test(`Popup ${browser}: site banner quick fill resolves matches from the unlocked session, not rendered filters`, async () => {
+    test(`Popup ${browser}: site banner shows matching entries without filling one implicitly`, async () => {
         const entry = editableItem()
         const view = await popup(browser, { items: [entry] })
         view.elements.searchItems.value = 'no match'
-        await view.api.quickFillCurrentSite()
+        await view.api.showCurrentSiteItems()
         await new Promise(setImmediate)
-        assert.equal(view.fills.length, 1)
-        assert.equal(view.fills[0].candidate.item.id, entry.id)
-        assert.equal(view.fills[0].candidate.username, 'Alice')
+        assert.equal(view.fills.length, 0)
+        assert.equal(view.elements.siteFilter.value, 'current')
+        assert.equal(view.elements.searchItems.value, '')
+        assert.equal(view.elements.resultCount.textContent, '1')
+        assert.equal(view.elements.items.children[0].dataset.itemId, entry.id)
     })
 
     test(`Popup ${browser}: matching row waits for fill success before closing`, async () => {

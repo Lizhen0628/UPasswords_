@@ -928,10 +928,12 @@ final class AppContext: ObservableObject {
         autoLockTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.autoLockTick() }
         }
-        // 输入、点击和滚动都算作活跃操作，不只在切换选中卡片时刷新空闲计时。
+        // 输入、指针移动、点击和滚动都算作活跃操作，不只在切换选中卡片时刷新空闲计时。
         // 本地事件监视器总在主线程触发;直接记录,避免每个按键/滚动事件都
         // 创建一次 Task(高频事件下造成不必要的调度开销)。
-        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]) { [weak self] event in
+        NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        ) { [weak self] event in
             MainActor.assumeIsolated { self?.touch() }
             return event
         }

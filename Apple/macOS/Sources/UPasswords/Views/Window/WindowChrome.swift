@@ -187,6 +187,8 @@ final class WindowChromeManager: NSObject {
     /// 幂等应用当前模式的全部 chrome 设置。
     func enforce() {
         guard let win = window else { return }
+        // 让本地事件监视器也能收到指针移动,用于空闲锁定计时。
+        if !win.acceptsMouseMovedEvents { win.acceptsMouseMovedEvents = true }
         if win.toolbar != nil {
             win.toolbar = nil
             log("enforce: cleared non-nil toolbar (system injected?)")

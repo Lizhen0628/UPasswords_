@@ -192,11 +192,22 @@ if [ -d "$OUT_DIR/UPasswords.app/Contents/PlugIns/UPasswordsCredentialProvider.a
 fi
 
 if [ -n "${REGISTRATION_SAFARI_EXTENSION:-}" ] && [ -d "$REGISTRATION_SAFARI_EXTENSION" ]; then
-  /usr/bin/pluginkit -a -v "$REGISTRATION_SAFARI_EXTENSION"
-  SAFARI_REGISTRATIONS=$(
-    /usr/bin/pluginkit -m -A -D -v -i com.upasswords.UPasswords.Safari.Extension 2>/dev/null || true
-  )
-  if [[ "$SAFARI_REGISTRATIONS" == *"$REGISTRATION_SAFARI_EXTENSION"* ]]; then
+  SAFARI_REGISTERED=false
+  for attempt in {1..10}; do
+    # Earlier removals of transient build paths can race PlugInKit's registry;
+    # repeat the stable-path add until the registry reports the installed copy.
+    /usr/bin/pluginkit -a "$REGISTRATION_SAFARI_EXTENSION" 2>/dev/null || true
+    SAFARI_REGISTRATIONS=$(
+      /usr/bin/pluginkit -m -A -D -v -i com.upasswords.UPasswords.Safari.Extension \
+        2>/dev/null || true
+    )
+    if [[ "$SAFARI_REGISTRATIONS" == *"$REGISTRATION_SAFARI_EXTENSION"* ]]; then
+      SAFARI_REGISTERED=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$SAFARI_REGISTERED" = true ]; then
     echo "==> Safari extension registered at stable app path"
   else
     echo "    WARNING: Safari extension registration was not confirmed"

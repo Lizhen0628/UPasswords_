@@ -3,11 +3,7 @@ import UPasswordsCore
 import UPasswordsPersistence
 import UPasswordsNetworking
 
-/// Detail pane, grouped-card style: centered header (large icon with a
-/// category badge at its bottom-right + bold title below), one rounded card of
-/// label-left / value-right rows (fields, labels, modified/created dates,
-/// notes), standalone security warning cards underneath, and the bottom action
-    /// bar (草稿保存 / 用于自动填充 / 收藏 / share).
+/// 卡片详情页：展示标题、字段、标签、日期和备注，以及安全提醒与底部操作栏。
 struct CardDetailView: View {
     @EnvironmentObject var ctx: AppContext
     @State private var editingCard: Card?
@@ -1107,7 +1103,7 @@ struct FieldRowView: View {
                         }
                     }
             )
-            // Handle copy on the first tap instead of waiting for double-tap disambiguation.
+            // 单击立即复制，避免等双击手势判定完成后才执行复制。
             .simultaneousGesture(
                 TapGesture().onEnded {
                     if field.type != .website { activateValue() }
@@ -1358,7 +1354,7 @@ private struct ValueEditorFramePreferenceKey: PreferenceKey {
     }
 }
 
-/// ViewCardOneTimePasswordCell — live RFC 6238 code with rollover progress.
+/// 展示符合 RFC 6238 的动态验证码及其周期进度。
 struct OTPView: View {
     let rawValue: String
     let onCopy: (String) -> Void

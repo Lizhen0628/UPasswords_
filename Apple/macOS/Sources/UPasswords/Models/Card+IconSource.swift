@@ -19,7 +19,3 @@ extension Card {
     /// 用户显式指定的图标（上传/URL）始终显示，不受「使用网站图标」开关约束。
     var iconIsUserExplicit: Bool { iconIsCustomUpload || iconIsFromUserURL }
 }
-
-extension Field {
-    func modifiedOr(_ fallback: TimeInterval) -> TimeInterval { fallback }
-}

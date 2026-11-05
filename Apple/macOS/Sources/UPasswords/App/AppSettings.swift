@@ -4,9 +4,7 @@ import AppKit
 import UPasswordsCore
 import UPasswordsPersistence
 
-/// App-level settings persisted in UserDefaults — the union of
-/// AppearanceViewController / SecurityViewController / AutoBackupViewController
-/// / SelectTextureSheetController option keys.
+/// macOS 客户端设置统一由此持有，并在属性变更时写回 UserDefaults。
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
@@ -34,15 +32,15 @@ final class AppSettings: ObservableObject {
     }
 
     // MARK: Security
-    /// auto_lock_setting seconds: 0=never 60 300 900 3600.
+    /// 自动锁定间隔（秒）；0 表示关闭，其余值由设置界面提供。
     @Published var autoLockSeconds: Int { didSet { d.set(autoLockSeconds, forKey: "sec.autoLock") } }
     @Published var lockInBackground: Bool { didSet { d.set(lockInBackground, forKey: "sec.lockInBackground") } }
     @Published var lockIfWindowClosed: Bool { didSet { d.set(lockIfWindowClosed, forKey: "sec.lockIfWindowClosed") } }
-    /// require_password_setting seconds: 0=never … forces password over Touch ID.
+    /// 强制重新输入主密码的间隔（秒）；0 表示不额外限制生物识别解锁。
     @Published var requirePasswordSeconds: Int { didSet { d.set(requirePasswordSeconds, forKey: "sec.requirePassword") } }
     @Published var fastUnlock: Bool { didSet { d.set(fastUnlock, forKey: "sec.fastUnlock") } }
     @Published var selfDestructAttempts: Int { didSet { d.set(selfDestructAttempts, forKey: "sec.selfDestruct") } }
-    /// empty_clipboard_setting seconds: 0=off 10 30 60 120.
+    /// 剪贴板自动清除间隔（秒）；0 表示关闭。
     @Published var clipboardClearSeconds: Int { didSet { d.set(clipboardClearSeconds, forKey: "clipboard.clearSeconds") } }
     /// 泄露库自动检查:解锁状态下按周期静默跑一次 HIBP;手动检查不受此开关限制。
     @Published var autoBreachCheckEnabled: Bool { didSet { d.set(autoBreachCheckEnabled, forKey: "sec.autoBreachCheck") } }
@@ -71,9 +69,9 @@ final class AppSettings: ObservableObject {
         return LockScreenImageStore.dir.appendingPathComponent(lockBackgroundImageName)
     }
 
-    // MARK: Auto backup (AutoBackupViewController)
+    // MARK: Auto backup
     @Published var autoBackupEnabled: Bool { didSet { d.set(autoBackupEnabled, forKey: "backup.enabled") } }
-    /// backup_interval_setting days.
+    /// 自动备份间隔（天）。
     @Published var backupIntervalDays: Int { didSet { d.set(backupIntervalDays, forKey: "backup.intervalDays") } }
 
     // MARK: Sync
@@ -91,7 +89,7 @@ final class AppSettings: ObservableObject {
     // MARK: Misc
     /// 主窗口侧栏显隐(工具栏左一按钮切换,布局记忆跨启动保留)。
     @Published var sidebarVisible: Bool { didSet { d.set(sidebarVisible, forKey: "app.sidebarVisible") } }
-    /// Optional sidebar rows (密码/文件/图片) shown through the 「显示」 menu.
+    /// 通过“显示”菜单控制是否展示密码、文件和图片分类。
     @Published var sidebarOptionalItems: [String] {
         didSet { d.set(sidebarOptionalItems.joined(separator: ","), forKey: "app.sidebarOptional") }
     }
@@ -139,13 +137,6 @@ final class AppSettings: ObservableObject {
         showWhatsNewAtStartup = d.object(forKey: "whatsnew.atStartup") as? Bool ?? true
     }
 
-    private func saveCodable<T: Encodable>(_ v: T, key: String) {
-        if let data = try? JSONEncoder().encode(v) { d.set(data, forKey: key) }
-    }
-    private static func loadCodable<T: Decodable>(_ type: T.Type, key: String) -> T? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
-    }
 }
 
 /// 锁定/显示主界面菜单快捷键的存储与广播:
@@ -176,8 +167,7 @@ final class ShortcutStore: ObservableObject {
     }
 }
 
-/// The 8 first-run setup tasks — values are Localizable keys;
-/// order matches the setup checklist.
+/// 首次启动清单中的八项任务；枚举顺序与界面清单保持一致。
 enum SetupPlanTask: String, CaseIterable, Identifiable {
     case cloudSync = "cloud_sync_task"
     case importPasswords = "import_passwords_task"
@@ -205,7 +195,7 @@ enum SetupPlanTask: String, CaseIterable, Identifiable {
     }
 }
 
-/// 17 procedural lock-screen textures (programmatically drawn gradients).
+/// 由程序绘制的 17 种锁屏渐变背景。
 enum LockTextures {
     static let count = 17
 

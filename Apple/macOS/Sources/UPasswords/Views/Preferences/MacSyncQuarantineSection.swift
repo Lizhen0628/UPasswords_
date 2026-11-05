@@ -2,7 +2,7 @@ import SwiftUI
 import UPasswordsCore
 import UPasswordsPersistence
 
-/// Shows retained remote sync records without exposing their encrypted payloads.
+/// 展示被隔离保留的远端同步记录，但不显示其中的加密载荷。
 struct MacSyncQuarantineSection: View {
     @EnvironmentObject private var ctx: AppContext
 

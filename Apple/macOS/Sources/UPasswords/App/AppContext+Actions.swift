@@ -24,7 +24,7 @@ extension AppContext {
                 let oldField = database.cards[i].fields.first { $0.id == f.id }
                     ?? database.cards[i].fields.first { $0.name == f.name && $0.type == f.type }
                 if let oldField {
-                    c.fields[j].putHistoryValue(oldField.value, time: oldField.modifiedOr(c.modified))
+                    c.fields[j].putHistoryValue(oldField.value, time: c.modified)
                 }
             }
             checkChangedPasswords(on: c, against: database.cards[i])
@@ -36,6 +36,32 @@ extension AppContext {
         if selectAfterSave { selectedCardId = c.id }
         saveDebounced()
         scheduleIconFetchAfterSave(cardId: c.id)
+    }
+
+    /// 将现有卡片另存为模板，保留内容并分配新的稳定标识。
+    ///
+    /// - Parameter card: 用作模板来源的卡片。
+    func saveAsTemplate(from card: Card) {
+        var template = card
+        template.id = UUID()
+        template.template = true
+        database.cards.append(template)
+        saveDebounced()
+        Log.info("ui", "template saved sourceCardId=\(card.id) templateId=\(template.id)")
+    }
+
+    /// 恢复尚未存在的内置模板，并按当前界面语言下的标题去重。
+    func restoreBuiltInTemplates() {
+        var existingTitles = Set(database.templateCards.map(\.title))
+        let restored = Templates.all.compactMap { spec -> Card? in
+            let title = L10n.db(spec.titleKey)
+            guard existingTitles.insert(title).inserted else { return nil }
+            return Templates.makeTemplateCard(spec)
+        }
+        guard !restored.isEmpty else { return }
+        database.cards.append(contentsOf: restored)
+        saveDebounced()
+        Log.info("ui", "built-in templates restored count=\(restored.count)")
     }
 
     /// 保存/修改卡片时,对新增或变更过的密码做泄露检查。本地清单已知的
@@ -185,7 +211,6 @@ extension AppContext {
         }
         var copy = card
         copy.id = UUID()
-        copy.title = card.title
         copy.created = Date().millis
         copy.modified = copy.created
         copy.favorite = false
@@ -274,7 +299,7 @@ extension AppContext {
         saveDebounced()
     }
 
-    /// Sets the labels attached to a card.
+    /// 替换卡片关联的标签，并刷新卡片修改时间。
     func setLabels(cardId: UUID, labelIds: [UUID]) {
         guard let i = database.cards.firstIndex(where: { $0.id == cardId }) else {
             Log.warn("ui", "setLabels cardId=\(cardId) skipped: card not found")
@@ -286,7 +311,7 @@ extension AppContext {
         saveDebounced()
     }
 
-    /// Creates a label on the fly and assigns it to the card.
+    /// 新建标签并立即关联到指定卡片。
     func addLabelAndAssign(name: String, color: String?, to cardId: UUID) {
         let id = UUID()
         database.labels.append(CardLabel(id: id, name: name, color: color, timeStamp: Date().millis))

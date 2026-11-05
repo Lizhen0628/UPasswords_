@@ -2,8 +2,6 @@
 "about_title" = "About";
 "above_all_button" = "Above all";
 "actions_button" = "Actions";
-"activate_button" = "Activate";
-"activate_license_text" = "Enter your email address to activate your existing license for UPasswords.";
 "add_button" = "Add";
 "add_card_button" = "Add card";
 "add_card_command" = "Add Card";
@@ -198,7 +196,6 @@
 "enter_password_button" = "Enter password";
 "enter_password_prompt" = "Enter password:";
 "enter_verification_code_prompt" = "Enter 6-digit verification code:";
-"enter_your_email_prompt" = "Enter your email:";
 "erase_data_command" = "Erase Data";
 "snapshot_cleanup_failed" = "Could not erase extension snapshots. Check the app logs.";
 "erase_data_text" = "This will erase all application's data and settings from your Mac. This will not erase any data from the cloud.";
@@ -279,7 +276,6 @@
 "length_prompt" = "Length:";
 "letters_and_numbers_text" = "Letters and numbers";
 "license_info_button" = "License info";
-"license_is_active_text" = "Your license is active.";
 "load_database_command" = "Load Database";
 "local_database_exists_error" = "A local database with this name already exists";
 "local_files_unreadable_error" = "The selected files could not be read. Make sure they exist and are accessible.";
@@ -431,7 +427,6 @@
 "restore_from_local_button" = "Restore from file";
 "restore_from_local_title" = "Restore from a Local File";
 "restore_location_text" = "To restore the database, select the same location as before.";
-"restore_purchase_button" = "Restore purchase";
 "restore_templates_command" = "Restore Templates";
 "restore_templates_query" = "Restore default templates?";
 "restoring_database_message" = "Restoring database…";

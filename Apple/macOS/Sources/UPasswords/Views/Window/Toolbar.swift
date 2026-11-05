@@ -331,7 +331,7 @@ struct ToolbarButton: View {
     }
 }
 
-/// Applies card sorting directly from the toolbar menu without a confirmation sheet.
+/// 在工具栏菜单中直接应用卡片排序，不再额外弹出确认窗口。
 struct SortingMenuButton: View {
     private static let favoritesLabelPunctuation = CharacterSet(charactersIn: ":： ")
     private static let rowHeight: CGFloat = 26

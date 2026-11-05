@@ -1,17 +1,16 @@
 import SwiftUI
 import UPasswordsCore
 
-/// A catalog of card icons organized into selectable groups, drawn with
-/// SF Symbols.
+/// 卡片图标目录；图标按可选分组管理，并使用 SF Symbols 绘制。
 final class SymbolModel {
     static let shared = SymbolModel()
 
-    /// group key (database.strings `*_group`) → symbol names
+    /// 分组本地化键（database.strings 中的 `*_group`）到符号名称的映射。
     let groups: [String: [String]]
-    /// symbol name → SF Symbol name for drawing
+    /// 符号名称到 SF Symbol 名称的映射。
     private let sfMap: [String: String]
 
-    /// Symbol names used by the built-in templates.
+    /// 内置模板使用的符号名称及其绘制资源。
     private static let catalog: [(group: String, items: [(name: String, sf: String)])] = [
         ("internet_group", [
             ("web_site", "globe"), ("email", "envelope"), ("router", "wifi.router"), ("network", "network"),
@@ -101,7 +100,7 @@ final class SymbolModel {
 
     func groupName(_ key: String) -> String { L10n.db(key) }
 
-    /// Credit-card brand detection by the number's IIN.
+    /// 根据银行卡号码的 IIN 前缀识别卡组织。
     func creditCardSymbol(forNumber number: String) -> String {
         let digits = number.filter(\.isNumber)
         guard digits.count >= 2 else { return "credit_card" }

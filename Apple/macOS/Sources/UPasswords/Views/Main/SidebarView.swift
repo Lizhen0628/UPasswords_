@@ -28,7 +28,7 @@ struct SidebarView: View {
     @State private var expandedSections: Set<String> = ["safe", "labels", "security", "special"]
     @State private var hoveredSection: String?
 
-    /// Row order inside the first (database/account) section.
+    /// 密码库分组内各分类行的显示顺序。
     private static let safeOrder: [SpecialLabel] = [.allCards, .favorites, .creditCards, .notes, .oneTimeCodes, .passkeys, .recent]
     private static let securityOrder: [SpecialLabel] = [.compromised, .weakPasswords, .samePasswords]
     private static let specialOrder: [SpecialLabel] = [.expiring, .expired, .archived, .templates, .trash]

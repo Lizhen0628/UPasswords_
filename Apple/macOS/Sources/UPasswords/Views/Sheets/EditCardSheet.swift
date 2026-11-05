@@ -4,16 +4,14 @@ import SwiftUI
 import UPasswordsCore
 import UPasswordsPersistence
 
-/// A working copy of the card being edited, plus sub-state for the
-/// symbol/color/template pickers.
+/// 编辑中的卡片副本及其编辑状态；实际保存前不会写入密码库。
 struct EditCardModel: Identifiable {
     var id: UUID { card.id }
     var card: Card
     var isNew: Bool = false
 }
 
-/// Tabbed card editor (fields / notes / images / files) presented as a sheet
-/// over the main window.
+/// 以弹层呈现的卡片编辑器，按字段、备注、图片和文件分栏编辑。
 struct EditCardSheet: View {
     @EnvironmentObject var ctx: AppContext
     @Binding var draft: EditCardModel?
@@ -238,10 +236,7 @@ private struct EditCardBody: View {
         HStack(spacing: 10) {
             if !draft.isNew {
                 Button(L10n.t("save_as_template_button")) {
-                    var t = draft.card
-                    t.template = true
-                    t.id = UUID()
-                    ctx.database.cards.append(t)
+                    ctx.saveAsTemplate(from: draft.card)
                     AppToast.shared.show(L10n.t("template_saved_message"))
                     ctx.editDraft = nil
                 }
@@ -432,7 +427,7 @@ private struct FieldsTab: View {
     }
 }
 
-/// Field add/edit sheet state (name/type/autofill).
+/// 字段编辑弹层使用的草稿状态。
 struct FieldEditorState: Identifiable {
     let id = UUID()
     var field: Field

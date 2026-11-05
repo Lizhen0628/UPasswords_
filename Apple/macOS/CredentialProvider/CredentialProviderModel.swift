@@ -4,7 +4,7 @@ import Foundation
 import UPasswordsCore
 import UPasswordsPersistence
 
-/// Session state for the macOS system credential provider.
+/// 管理 macOS 系统凭据提供器的请求状态和解锁会话。
 @MainActor
 final class CredentialProviderModel: ObservableObject {
     enum Stage {
@@ -36,7 +36,7 @@ final class CredentialProviderModel: ObservableObject {
         return components.host ?? identifier
     }
 
-    /// Attaches a password list request from the system.
+    /// 接入系统发起的密码列表请求并重置本次请求状态。
     func attach(context: ASCredentialProviderExtensionContext,
                 serviceIdentifiers: [ASCredentialServiceIdentifier]) {
         self.context = context
@@ -56,7 +56,7 @@ final class CredentialProviderModel: ObservableObject {
         Log.info("autofill", "macOS credential list requested: services=\(self.serviceIdentifiers.count)")
     }
 
-    /// Attaches a request that was opened from a specific credential suggestion.
+    /// 接入由特定凭据建议触发的请求，并记录目标凭据标识。
     func attach(context: ASCredentialProviderExtensionContext,
                 request: any ASCredentialRequest) {
         self.context = context
@@ -76,7 +76,7 @@ final class CredentialProviderModel: ObservableObject {
         Log.info("autofill", "macOS credential request opened")
     }
 
-    /// Unlocks the encrypted snapshot shared by the containing app and extension.
+    /// 使用主密码解锁主应用共享的加密快照。
     func unlock() {
         guard let snapshotRoot = Self.snapshotRoot,
               let databaseName = Self.currentDatabaseName(in: snapshotRoot) else {
@@ -87,14 +87,14 @@ final class CredentialProviderModel: ObservableObject {
         unlock(password: masterInput, databaseName: databaseName, showsPasswordError: true)
     }
 
-    /// Attempts Touch ID once when the credential picker first appears.
+    /// 凭据选择器首次显示时，至多自动尝试一次 Touch ID 解锁。
     func attemptBiometricUnlockIfAvailable() {
         guard !biometricUnlockAttempted else { return }
         biometricUnlockAttempted = true
         unlockWithBiometrics()
     }
 
-    /// Prompts for Touch ID to unlock the shared vault snapshot.
+    /// 请求 Touch ID 以解锁共享的密码库快照。
     func unlockWithBiometrics() {
         guard biometricUnlockAvailable, !biometricUnlockInProgress,
               let accessGroup = Self.keychainAccessGroup else { return }
@@ -177,7 +177,7 @@ final class CredentialProviderModel: ObservableObject {
                 accessGroup: accessGroup)
     }
 
-    /// Returns a selected password to the system.
+    /// 将选中的密码凭据返回给系统。
     func select(_ card: Card) {
         guard !card.login.isEmpty, !card.password.isEmpty else {
             Log.warn("autofill", "macOS credential provider rejected empty credential")
@@ -188,7 +188,7 @@ final class CredentialProviderModel: ObservableObject {
         Log.info("autofill", "macOS credential provided: card=\(card.id.uuidString.prefix(8))")
     }
 
-    /// Cancels the active system request.
+    /// 取消当前系统凭据请求。
     func cancel() {
         let error = NSError(
             domain: ASExtensionErrorDomain,

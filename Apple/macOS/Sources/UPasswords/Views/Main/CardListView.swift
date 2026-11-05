@@ -74,12 +74,8 @@ struct CardListView: View {
         }
         Button(L10n.t("move_command")) { ctx.activeSheet = .labels(cardId: card.id) }
         Button(L10n.t("duplicate_command")) { ctx.duplicateCard(card.id) }
-        Button(L10n.t("merge_command")) {}
         Button(L10n.t("save_as_template_command")) {
-            var t = card
-            t.template = true
-            t.id = UUID()
-            ctx.database.cards.append(t)
+            ctx.saveAsTemplate(from: card)
         }
         if card.archived {
             Button(L10n.t("unarchive_command")) { ctx.unarchiveCard(card.id) }

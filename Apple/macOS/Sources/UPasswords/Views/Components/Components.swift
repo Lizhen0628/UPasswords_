@@ -6,7 +6,7 @@ extension Color {
     static let appBackground = Color(red: 35.0/255.0, green: 34.0/255.0, blue: 32.0/255.0)
 }
 
-/// Card color palette resolution (XML `color` attribute → SwiftUI color).
+/// 将 XML `color` 属性转换为 SwiftUI 卡片颜色。
 extension CardColor {
     var color: Color {
         switch self {
@@ -32,10 +32,7 @@ extension CardColor {
     }
 }
 
-/// Renders a card's icon. Resolution order
-/// (with `card` provided): ① Card.iconData（抓取/上传/URL 的 PNG）→ 圆形裁切;
-/// ② iconSource=builtin:<key> → 品牌方砖;③ 「使用网站图标」开启时按域名/标题
-/// 实时匹配品牌方砖（离线、即时,作为抓取失败的兜底）;④ 默认:符号+颜色圆形。
+/// 按优先级解析卡片图标：卡片图片、内置品牌图标、网站图标匹配，最后回退到符号图标。
 struct CardIconView: View {
     let symbol: String?
     let color: String?
@@ -155,7 +152,7 @@ extension Color {
     }
 }
 
-/// StrengthIndicator (Services/StrengthIndicator.h): 0–4 segments + crack time.
+/// 展示密码强度等级和预计破解时间。
 struct StrengthIndicatorView: View {
     let strength: PasswordStrength
 
@@ -186,7 +183,7 @@ struct StrengthIndicatorView: View {
 }
 
 extension View {
-    /// Places the toast overlay + click-activity tracking on any root view.
+    /// 在根视图上叠加操作提示，并记录用户活动以支持自动锁定。
     func withToastAndActivity() -> some View {
         modifier(ToastActivityModifier())
     }
@@ -236,8 +233,7 @@ private struct ToastHud: View {
     }
 }
 
-/// Standard chrome for sheet dialogs: title bar,
-/// content, cancel/OK row (keyboard-wired), optional search field.
+/// 弹层通用布局：标题、内容、支持键盘操作的取消/确认按钮及可选搜索框。
 struct SheetShell<Content: View>: View {
     let title: String
     var minWidth: CGFloat = 400

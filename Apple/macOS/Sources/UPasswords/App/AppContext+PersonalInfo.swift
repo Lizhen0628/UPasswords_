@@ -2,8 +2,8 @@ import Foundation
 import UPasswordsCore
 
 extension AppContext {
-    /// Updates the encrypted registration preference for every profile in this vault.
-    /// - Parameter enabled: Whether registration forms can offer saved contact details.
+    /// 更新当前密码库所有个人资料的加密自动填充设置。
+    /// - Parameter enabled: 是否允许注册表单使用已保存的联系信息。
     func setRegistrationAutofillEnabled(_ enabled: Bool) {
         settings.registrationAutofillEnabled = enabled
         for index in database.userProfiles.indices {
@@ -15,8 +15,8 @@ extension AppContext {
         saveDebounced()
     }
 
-    /// Saves personal information independently from password cards.
-    /// - Parameter draft: Edited contact details; an empty draft removes the current profile.
+    /// 独立保存个人资料，不将其写入密码卡片。
+    /// - Parameter draft: 编辑后的联系信息；内容为空时删除当前资料。
     func savePersonalInfo(_ draft: PersonalInfoDraft) {
         let previous = database.userProfiles.first
         let enabled = previous?.registrationAutofillEnabled ?? settings.registrationAutofillEnabled
@@ -33,7 +33,7 @@ extension AppContext {
         Log.info("ui", "personal information saved records=\(database.userProfiles.count)")
     }
 
-    /// Migrates old contact cards and consumes onboarding details after vault unlock.
+    /// 解锁后迁移旧版联系信息卡片，并处理首次设置流程暂存的资料。
     func savePendingPersonalInfoIfNeeded() {
         guard phase == .unlocked else { return }
         if database.migrateLegacyPersonalInfo() > 0 { saveDebounced() }

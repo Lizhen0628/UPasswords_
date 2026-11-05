@@ -43,7 +43,7 @@ extension AppContext {
 
     // MARK: - Card list strategies
 
-    /// The card list for the current sidebar selection + search.
+    /// 返回当前侧栏选择与搜索词对应的排序后卡片。
     func cards(for selection: SidebarSelection, search: String) -> [Card] {
         let filterKey = cardFilterCacheKey(for: selection, search: search)
         let filteredIDs = filteredCardIDs(for: filterKey)
@@ -153,7 +153,7 @@ extension AppContext {
         }
     }
 
-    /// Sidebar badge count snapshot, refreshed once per database change or calendar day.
+    /// 返回侧栏计数快照；密码库变更或跨日时重新计算。
     func sidebarCount(for selection: SidebarSelection) -> Int {
         let now = Date()
         guard sidebarCountsAreCurrent,
@@ -263,10 +263,9 @@ extension AppContext {
         sidebarCardCounts[.special(.recent)] = recentIds.filter(sidebarActiveCardIDs.contains).count
     }
 
-    // MARK: - Search (XCard.satisfiesToSearchWords / previewForSearchWords)
+    // MARK: - Search
 
-    /// XCard.satisfiesToSearchWords:labelNames: — every word must hit title,
-    /// field name/value, notes or label names; passwords optionally included.
+    /// 搜索词逐个匹配标题、字段名/值、笔记或按设置启用的标签名。
     private func satisfiesSearch(_ card: Card, words: [String]) -> Bool {
         words.allSatisfy { containsWord(card, word: $0) }
     }
@@ -276,12 +275,10 @@ extension AppContext {
         if matchesSearchTerm(word, in: card.notes) { return true }
         for f in card.fields {
             if matchesSearchTerm(word, in: f.name) { return true }
-            if f.type.isSearchable {
-                if !f.type.isHidden || settings.searchPasswords {
-                    if matchesSearchTerm(word, in: f.value) { return true }
-                } else if matchesSearchTerm(word, in: f.value) {
-                    return true // hidden fields match on value but not shown in preview
-                }
+            if f.type.isSearchable,
+               (!f.type.isHidden || settings.searchPasswords),
+               matchesSearchTerm(word, in: f.value) {
+                return true
             }
         }
         if settings.searchByLabels {
@@ -296,7 +293,7 @@ extension AppContext {
         text.range(of: word, options: .caseInsensitive) != nil
     }
 
-    /// XCard.previewForSearchWords — the "title — matched snippet" row preview.
+    /// 生成搜索命中摘要；隐藏字段只有在设置允许时才会显示值片段。
     func searchPreview(for card: Card, word: String) -> String? {
         let w = word.lowercased()
         for f in card.fields where f.type.isSearchable {

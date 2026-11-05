@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import UPasswordsCore
 
-/// Entry point — AppDelegate keeps the dock menu / quit behaviors.
+/// macOS 应用入口；程序坞菜单与退出行为由 AppDelegate 管理。
 @main
 struct UPasswordsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate

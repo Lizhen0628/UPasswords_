@@ -1,26 +1,21 @@
 import Foundation
 import UPasswordsNetworking
 
-/// Sheets catalog — one case per sheet; associated values
-/// carry targets (label id, card id, field draft…).
-/// 视图映射见 Views/Sheets/SheetFactory.swift。
+/// 弹层路由目录；关联值携带标签、卡片等目标标识。
+/// 具体视图映射统一登记在 `Views/Sheets/SheetFactory.swift`。
 enum AppSheet: Identifiable, Hashable {
     case addCard            // 添加项目
     case addNote            // 添加笔记
     case addLabel
     case editCardLabel(id: UUID) // rename_label_title
     case selectColorCardLabel(id: UUID) // 标签颜色选择
-    case addTemplate        // save_as_template (存为模板)
     case sorting
     case generator
     case labels(cardId: UUID)
-    case addField
-    case editField
     case selectSymbol
     case selectColor        // 卡片颜色选择
     case selectTexture
     case selectTemplate     // template picker inside edit-card
-    case history            // 最近历史
     case passwordHistory    // password_history_command
     case exportAs
     case importData
@@ -38,7 +33,6 @@ enum AppSheet: Identifiable, Hashable {
     case whatsNew
     case premium
     case setupPlan
-    case enterPassword      // 解锁
     case expiredCards       // expiring_cards_warning prompt
     case restoreTemplates   // restore_templates_query
 
@@ -49,17 +43,13 @@ enum AppSheet: Identifiable, Hashable {
         case .addLabel: return "addLabel"
         case .editCardLabel(let id): return "editLabel:\(id)"
         case .selectColorCardLabel(let id): return "selectColorLabel:\(id)"
-        case .addTemplate: return "addTemplate"
         case .sorting: return "sorting"
         case .generator: return "generator"
         case .labels(let id): return "labels:\(id)"
-        case .addField: return "addField"
-        case .editField: return "editField"
         case .selectSymbol: return "selectSymbol"
         case .selectColor: return "selectColor"
         case .selectTexture: return "selectTexture"
         case .selectTemplate: return "selectTemplate"
-        case .history: return "history"
         case .passwordHistory: return "passwordHistory"
         case .exportAs: return "exportAs"
         case .importData: return "importData"
@@ -78,7 +68,6 @@ enum AppSheet: Identifiable, Hashable {
         case .whatsNew: return "whatsNew"
         case .premium: return "premium"
         case .setupPlan: return "setupPlan"
-        case .enterPassword: return "enterPassword"
         case .expiredCards: return "expiredCards"
         case .restoreTemplates: return "restoreTemplates"
         }

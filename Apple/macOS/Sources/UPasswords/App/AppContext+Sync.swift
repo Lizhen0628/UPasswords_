@@ -14,7 +14,7 @@ extension AppContext {
         guard let vaultKey else { return }
         do {
             var state = RowSyncState()
-            // Import receipts belong to this local database, independently of its cloud binding.
+            // 导入回执属于本地库本身，不随云端绑定状态重置。
             state.importedSourceKeys = rowSync.importedSourceKeys
             state.quarantinedItems = rowSync.quarantinedItems
             try commitSyncSnapshot(database, name: databaseName, vaultKey: vaultKey, state: state)
@@ -25,7 +25,7 @@ extension AppContext {
         }
     }
 
-    /// Retries retained cloud records using the currently unlocked vault key.
+    /// 使用当前解锁密钥重试此前隔离保留的云端记录。
     func retryQuarantinedSyncItems() async {
         guard phase == .unlocked, syncState != .syncing,
               !rowSync.quarantinedItems.isEmpty,
@@ -61,12 +61,6 @@ extension AppContext {
             Log.error("sync", "quarantined record retry failed: \(error)")
             AppToast.shared.show(error.localizedDescription)
         }
-    }
-
-    func loadRowSyncState() throws {
-        let state = try store.loadSyncState(for: databaseName)
-        rowSync = state
-        Log.info("sync", "restored row sync state for \"\(databaseName)\" (cursor=\(rowSync.cursor), pending=\(rowSync.dirtyUpserts.count + rowSync.dirtyDeletes.count))")
     }
 
     /// await 后验证库名、密钥与会话代次;旧任务不得写入新会话。
@@ -181,7 +175,7 @@ extension AppContext {
         startBackupCapture(auto: false)
     }
 
-    /// Restores a backup as an independent local database without replacing the active vault.
+    /// 将备份恢复为独立的本地密码库，不替换当前正在使用的密码库。
     func restoreBackupAsCopy(
         backup: URL,
         name: String,
@@ -230,7 +224,7 @@ extension AppContext {
         backupCaptureTask = nil
     }
 
-    /// Protects the current local vault first, then adopts a fresh cloud snapshot after cursor expiry.
+    /// 先备份保护当前本地数据，再在同步游标过期后接管最新云端快照。
     func recoverExpiredSyncCursor() async {
         guard phase == .unlocked, syncCursorRecoveryRequired, syncState != .syncing,
               backupCaptureTask == nil,

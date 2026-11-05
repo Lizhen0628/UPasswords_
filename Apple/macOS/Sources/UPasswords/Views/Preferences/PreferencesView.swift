@@ -867,7 +867,7 @@ struct CloudPane: View {
     }
 }
 
-/// Body of ConfigureCloudSheet reusable in the preferences pane.
+/// 可复用于偏好设置页的云同步配置表单主体。
 struct ConfigureCloudSheetContents: View {
     @EnvironmentObject var ctx: AppContext
     @EnvironmentObject var settings: AppSettings

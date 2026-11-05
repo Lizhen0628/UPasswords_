@@ -3,12 +3,12 @@ import SwiftUI
 
 import UPasswordsCore
 
-/// Clipboard copy with auto-clear.
+/// 管理剪贴板复制、定时清除和全窗口共享的提示消息。
 @MainActor
 final class ClipboardModel: ObservableObject {
     static let shared = ClipboardModel()
 
-    /// empty_clipboard_setting seconds; 0 = off.
+    /// 自动清空剪贴板的等待秒数；0 表示关闭。
     var clearSeconds: Int {
         UserDefaults.standard.integer(forKey: "clipboard.clearSeconds")
     }
@@ -50,14 +50,14 @@ final class ClipboardModel: ObservableObject {
         }
     }
 
-    /// Copies an OTP code with the dedicated message (otp_copied_message).
+    /// 复制一次性验证码，并显示专用的复制成功提示。
     func copyOTP(_ code: String) {
         copy(code, alert: false)
         AppToast.shared.show(L10n.t("otp_copied_message"))
     }
 }
 
-/// Lightweight toast surface shared by all windows.
+/// 供所有窗口共用的轻量提示状态。
 @MainActor
 final class AppToast: ObservableObject {
     static let shared = AppToast()

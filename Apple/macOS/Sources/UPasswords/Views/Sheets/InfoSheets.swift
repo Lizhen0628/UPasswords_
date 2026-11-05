@@ -105,7 +105,6 @@ struct WhatsNewSheet: View {
 
 /// 展示应用内高级功能说明与相关入口。
 struct PremiumSheet: View {
-    @EnvironmentObject var ctx: AppContext
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
@@ -117,22 +116,9 @@ struct PremiumSheet: View {
             onOk: { dismiss() },
             content: {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label(L10n.t("license_is_active_text"), systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(L10n.t("activate_license_text")).font(.callout)
-                            HStack {
-                                TextField(L10n.t("enter_your_email_prompt"), text: .constant(""))
-                                    .textFieldStyle(.roundedBorder)
-                                Button(L10n.t("activate_button")) {}
-                            }
-                            Button(L10n.t("restore_purchase_button")) {}
-                                .buttonStyle(.link)
-                        }
-                    }
                     Text(L10n.t("premium_note"))
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
         )
@@ -246,12 +232,7 @@ struct RestoreTemplatesSheet: View {
             okTitle: L10n.t("restore_button"),
             onCancel: { dismiss() },
             onOk: {
-                for spec in Templates.all {
-                    if ctx.database.templateCards.first(where: { $0.title == L10n.db(spec.titleKey) }) == nil {
-                        ctx.database.cards.append(Templates.makeTemplateCard(spec))
-                    }
-                }
-                ctx.saveDebounced()
+                ctx.restoreBuiltInTemplates()
                 dismiss()
             },
             content: {

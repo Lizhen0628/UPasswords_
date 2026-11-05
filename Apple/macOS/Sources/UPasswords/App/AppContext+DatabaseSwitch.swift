@@ -6,12 +6,12 @@ import UPasswordsPersistence
 /// 切换密码库:先验证目标库解锁密码,成功才切换。
 extension AppContext {
 
-    /// Renames the legacy files and the native business store as one session-level operation.
+    /// 在同一会话操作中重命名旧版文件和原生数据存储。
     ///
     /// - Parameters:
-    ///   - oldName: Existing local database name.
-    ///   - newName: New local database name.
-    /// - Throws: Validation, file, or native-store errors.
+    ///   - oldName: 当前本地密码库名。
+    ///   - newName: 新的本地密码库名。
+    /// - Throws: 名称校验、文件操作或原生数据存储出错时抛出错误。
     func renameDatabase(from oldName: String, to newName: String) throws {
         guard oldName != newName else { return }
         var nativeRenamed = false

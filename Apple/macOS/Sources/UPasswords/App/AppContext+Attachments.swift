@@ -6,7 +6,7 @@ import UPasswordsCore
 import UPasswordsPersistence
 
 extension AppContext {
-    /// Monitors policy changes; network recovery resumes transient failures only.
+    /// 监听网络策略变化；网络恢复时只重试可恢复的附件下载失败。
     func startAttachmentNetworkMonitor() {
         guard attachmentNetworkMonitor == nil else { return }
         let monitor = NWPathMonitor()
@@ -39,12 +39,12 @@ extension AppContext {
                 self.scheduleMissingAttachmentDownloads()
             }
         }
-        // NWPathMonitor requires a dispatch queue; the callback is pinned to the main actor.
+        // NWPathMonitor 要求传入队列；指定主队列后，回调可安全使用主 actor 状态。
         monitor.start(queue: .main)
         attachmentNetworkMonitor = monitor
     }
 
-    /// Reconstructs pending work from current references and durable version policy.
+    /// 根据当前附件引用和持久化版本策略重建待下载任务。
     func scheduleMissingAttachmentDownloads() {
         guard isAttachmentSessionUnlocked, !attachmentLedgerUnavailable else { return }
         do {
@@ -62,7 +62,7 @@ extension AppContext {
         }
     }
 
-    /// Opening a card resumes evicted caches; only an explicit retry resets failed attempts.
+    /// 打开卡片时恢复已淘汰附件的下载；只有用户明确重试才重置失败次数。
     func prioritizeAttachmentDownload(cardID: UUID, retryFailures: Bool = false) {
         guard isAttachmentSessionUnlocked else { return }
         do {
@@ -82,7 +82,7 @@ extension AppContext {
         }
     }
 
-    /// Loads already-cached content for the selected card without fetching unrelated files.
+    /// 只加载当前卡片已有的附件缓存，不触发其他文件的网络下载。
     func loadCachedAttachments(cardID: UUID) {
         guard phase == .unlocked, let vaultKey, let nativeStore,
               let cardIndex = database.cards.firstIndex(where: { $0.id == cardID }) else { return }
@@ -115,7 +115,7 @@ extension AppContext {
         Log.info("db", "loaded local attachment cache cardId=\(cardID) count=\(loadedCount) bytes=\(loadedBytes) elapsedMs=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
     }
 
-    /// Releases decoded attachment bytes after the selected card leaves the detail pane.
+    /// 卡片离开详情页后释放已解码的附件字节，避免长期占用内存。
     func releaseCachedAttachments(cardID: UUID) {
         guard let cardIndex = database.cards.firstIndex(where: { $0.id == cardID }) else { return }
         var updated = database
@@ -196,13 +196,13 @@ extension AppContext {
         return 1
     }
 
-    /// Whether a stable attachment is protected from automatic local cache eviction.
+    /// 判断稳定附件是否受用户保留策略保护，不参与自动缓存淘汰。
     func isAttachmentKeptOffline(cardID: UUID, attachmentID: UUID) -> Bool {
         attachmentDownloadLedger?.offlineAttachments.contains(
             .init(cardID: cardID, attachmentID: attachmentID)) == true
     }
 
-    /// Persists the user's retention choice before scheduling any missing content.
+    /// 先持久化用户的保留选择，再为缺失内容安排下载。
     func setAttachmentKeptOffline(_ isKeptOffline: Bool, cardID: UUID, attachmentID: UUID) {
         guard isAttachmentSessionUnlocked else { return }
         let identity = AttachmentDownloadLedger.Identity(cardID: cardID, attachmentID: attachmentID)
@@ -217,7 +217,7 @@ extension AppContext {
         }
     }
 
-    /// Explains why missing content is queued, backing off, or paused.
+    /// 返回附件缺失、等待重试或暂停下载的具体原因。
     func attachmentDownloadStatusText(cardID: UUID) -> String? {
         guard let card = database.card(id: cardID), hasMissingAttachmentContent(card) else { return nil }
         if attachmentLedgerUnavailable { return L10n.t("attachment_download_state_error") }
@@ -244,7 +244,7 @@ extension AppContext {
         attachmentDownloadTask = Task { [weak self] in await self?.drainAttachmentDownloads() }
     }
 
-    /// Cancels this session's work; durable retry limits and retention remain on disk.
+    /// 取消当前会话的下载任务；磁盘上的重试限制和保留设置保持不变。
     func cancelAttachmentDownloads() {
         attachmentCacheBytes.removeAll()
         attachmentDownloadQueue.cancelInFlight()
@@ -297,7 +297,7 @@ extension AppContext {
     private func drainAttachmentDownloads() async {
         defer {
             attachmentDownloadTask = nil
-            // Other cards can outlast an earlier retry delay; rescan due versions before sleeping.
+            // 其他卡片的重试时间可能更晚；休眠前重新扫描已到期的附件版本。
             if isAttachmentSessionUnlocked { scheduleMissingAttachmentDownloads() }
         }
         while !Task.isCancelled, nextAttachmentDownloadIsAllowed {
@@ -325,8 +325,7 @@ extension AppContext {
                 activeVersion = version
                 setAttachmentDownloadState(.downloading, cardID: cardID)
                 let protected = Set(AttachmentDownloadLedger.versions(in: database, cardID: cardID))
-                // Reserve the actual size after verification; a worst-case reservation would
-                // incorrectly pause small files that still fit within the remaining budget.
+                // 校验后按实际大小预留空间；按最大估算值预留会误暂停仍能放入预算的小文件。
                 try applyAttachmentCacheBudget(incomingBytes: 0,
                                                protecting: protected, key: key, vaultKey: snapshotKey)
                 Log.info("sync", "attachment download started cardId=\(cardID) attachmentId=\(version.identity.attachmentID) priority=\(entry.isPrioritized)")
@@ -412,7 +411,7 @@ extension AppContext {
         guard plan.hasCapacity else { throw CocoaError(.fileWriteOutOfSpace) }
         let available = try store.root.resourceValues(forKeys: [.volumeAvailableCapacityKey])
             .volumeAvailableCapacity
-        // Encrypted XML and atomic staging need headroom beyond the raw incoming bytes.
+        // 加密 XML 和原子暂存会产生额外开销，所需空间应高于下载内容本身大小。
         let requiredBytes = max(64 * 1024 * 1024, incomingBytes * 4)
         if let available, available < requiredBytes { throw CocoaError(.fileWriteOutOfSpace) }
         guard !plan.evictedVersions.isEmpty else { return }

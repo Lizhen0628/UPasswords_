@@ -1,7 +1,7 @@
 import SwiftUI
 import UPasswordsCore
 
-/// Phase router: setup wizard / lock screen / main window.
+/// 根据会话阶段切换初始化向导、锁屏页或主窗口。
 struct RootView: View {
     @EnvironmentObject var ctx: AppContext
     @EnvironmentObject var settings: AppSettings

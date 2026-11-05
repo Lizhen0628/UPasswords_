@@ -3,7 +3,7 @@ import SwiftUI
 import UPasswordsCore
 import UPasswordsPersistence
 
-/// Reviews and imports complete cards from another local database.
+/// 审核并导入其他本地密码库中的完整卡片。
 struct ImportCardsSheet: View {
     @EnvironmentObject private var ctx: AppContext
     @Environment(\.dismiss) private var dismiss

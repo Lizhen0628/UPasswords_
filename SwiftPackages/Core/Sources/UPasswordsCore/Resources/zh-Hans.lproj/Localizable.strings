@@ -2,8 +2,6 @@
 "about_title" = "关于";
 "above_all_button" = "置顶";
 "actions_button" = "动作";
-"activate_button" = "激活";
-"activate_license_text" = "输入您的电子邮件地址以激活现有的 UPasswords 许可证。";
 "add_button" = "添加";
 "add_card_button" = "添加项目";
 "add_card_command" = "添加项目";
@@ -198,7 +196,6 @@
 "enter_password_button" = "输入密码";
 "enter_password_prompt" = "输入密码：\n";
 "enter_verification_code_prompt" = "请输入6位验证码：";
-"enter_your_email_prompt" = "请输入你的邮箱:";
 "erase_data_command" = "擦除数据";
 "snapshot_cleanup_failed" = "无法清除扩展快照，请检查应用日志。";
 "erase_data_text" = "这将从您的电脑上删除所有应用程序数据和设置。但不会删除任何云端储存上的数据。";
@@ -279,7 +276,6 @@
 "length_prompt" = "长度：";
 "letters_and_numbers_text" = "仅字母和数字";
 "license_info_button" = "许可证信息";
-"license_is_active_text" = "您的许可证已激活。";
 "load_database_command" = "加载密码库";
 "local_database_exists_error" = "本地已存在同名密码库";
 "local_files_unreadable_error" = "无法读取所选文件，请确认文件存在且可访问。";
@@ -431,7 +427,6 @@
 "restore_from_local_button" = "本地还原";
 "restore_from_local_title" = "从本地文件还原密码库";
 "restore_location_text" = "要复恢复密码库，请选择与之前相同的位置。";
-"restore_purchase_button" = "恢复购买";
 "restore_templates_command" = "恢复模板";
 "restore_templates_query" = "还原默认模板？";
 "restoring_database_message" = "正在还原密码库…";

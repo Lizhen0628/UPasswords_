@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shows the remaining time in the current one-time password period.
+/// 显示当前一次性验证码周期的剩余时间。
 struct OTPCountdownRing: View {
     private static let diameter: CGFloat = 18
     private static let lineWidth: CGFloat = 2.5

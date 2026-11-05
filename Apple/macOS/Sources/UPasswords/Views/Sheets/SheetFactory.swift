@@ -40,20 +40,14 @@ enum SheetFactory {
         case .expiredCards: ExpiredCardsSheet()
         case .restoreTemplates: RestoreTemplatesSheet()
         case .passwordHistory: PasswordHistorySheet()
-        case .addField, .editField:
-            // handled locally inside EditCardSheet
-            EmptyView()
         case .preferences:
             PreferencesSheet()
-        case .history, .addTemplate, .enterPassword:
-            EmptyView() // history = recent sidebar label
         }
     }
 }
 
 
-/// Wraps the full tabbed PreferencesView for menu/setup-plan presentation
-/// when the Settings scene is not reachable directly.
+/// 在设置场景不可直接打开时，供菜单和初始化清单嵌入完整偏好设置页。
 struct PreferencesSheet: View {
     @Environment(\.dismiss) var dismiss
 

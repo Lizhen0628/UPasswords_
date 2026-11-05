@@ -58,8 +58,8 @@ enum SafariSnapshotBridge {
         }
     }
 
-    /// Removes both extension snapshots, attempting each even if one removal fails.
-    /// - Throws: An error if the shared group is unavailable or a snapshot cannot be removed.
+    /// 删除两个扩展的共享快照；其中一个删除失败时仍会继续尝试另一个。
+    /// - Throws: 共享容器不可用或快照删除失败时抛出错误。
     static func removeSnapshots() throws {
         guard let group = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroup) else {
@@ -68,11 +68,11 @@ enum SafariSnapshotBridge {
         try removeSnapshots(in: group)
     }
 
-    /// Removes snapshot directories within an injected group root.
+    /// 在指定的共享容器目录中删除扩展快照。
     /// - Parameters:
-    ///   - group: Shared container root.
-    ///   - removeItem: File removal operation, injectable for error-path tests.
-    /// - Throws: The first removal error after attempting both directories.
+    ///   - group: 共享容器根目录。
+    ///   - removeItem: 文件删除操作，供错误路径测试注入。
+    /// - Throws: 两个目录均尝试删除后，若有失败则抛出首个错误。
     static func removeSnapshots(
         in group: URL,
         removeItem: (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }

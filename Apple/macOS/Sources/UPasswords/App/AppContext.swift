@@ -7,9 +7,7 @@ import UPasswordsCore
 import UPasswordsPersistence
 import UPasswordsNetworking
 
-/// Central session controller — owns the session state, database persistence
-/// and the card-list strategies per sidebar selection.
-///
+/// 主会话控制器，负责会话状态、密码库持久化及按侧栏选择生成卡片列表。
 /// 职责拆分(同类型 extension,便于按域浏览):
 /// - 本文件:会话状态、启动引导、锁定/解锁生命周期、持久化、自动锁
 /// - AppContext+CardList:侧栏卡片列表策略、搜索、最近打开
@@ -88,8 +86,11 @@ final class AppContext: ObservableObject {
     @Published var phase: Phase = .setup {
         didSet {
             syncSessionID = UUID()
-            if phase != .unlocked { cancelAttachmentDownloads() }
-            if phase != .unlocked { cancelBackupCapture() }
+            if phase != .unlocked {
+                // 离开解锁态时撤销只对当前会话有效的后台工作。
+                cancelAttachmentDownloads()
+                cancelBackupCapture()
+            }
             Log.info("lifecycle", "phase \(oldValue) → \(phase)")
             savePendingPersonalInfoIfNeeded()
         }
@@ -127,7 +128,7 @@ final class AppContext: ObservableObject {
     var sidebarCountsCalculatedAt = Date.distantPast
     var sidebarCountsAreCurrent = false
     @Published var syncCursorRecoveryRequired = false
-    /// Memory-only onboarding draft, consumed after creation or restoration unlocks the vault.
+    /// 仅保存在内存中的首次设置资料；新建或恢复密码库并解锁后消费。
     var pendingPersonalInfo: PersonalInfoDraft?
     @Published var databaseName: String = "" {
         didSet {
@@ -226,7 +227,7 @@ final class AppContext: ObservableObject {
     var attachmentRetryTask: Task<Void, Never>?
     var attachmentDownloadTask: Task<Void, Never>?
 
-    /// In-memory password, present only while unlocked.
+    /// 仅在密码库解锁期间保存在内存中的主密码。
     /// 仅生命周期代码(unlock/lock/erase/changePassword)可写入。
     nonisolated(unsafe) var password: String = ""
     /// v2 信封加密的库密钥(解锁时由信封解出;保存/同步解密本体用,与主密码解耦)。
@@ -235,8 +236,7 @@ final class AppContext: ObservableObject {
 
     let settings = AppSettings.shared
     let store = DatabaseStore.shared
-    /// SwiftData is the migrated local business store; the legacy encrypted
-    /// files remain available as a rollback copy during this transition.
+    /// SwiftData 是迁移后的本地业务数据存储；迁移过渡期仍保留旧加密文件以便回滚。
     lazy var nativeStore: SwiftDataVaultStore? = {
         do {
             return try SwiftDataVaultStore(root: store.root)
@@ -692,7 +692,7 @@ final class AppContext: ObservableObject {
             sharedAccessGroup: Self.credentialProviderKeychainAccessGroup)
     }
 
-    /// Requests an embedded Touch ID evaluation from the visible lock screen.
+    /// 请求当前锁屏界面发起 Touch ID 验证。
     func unlockWithTouchID() {
         guard phase == .locked, settings.fastUnlock, hasBiometricItem else {
             Log.debug(
@@ -709,14 +709,14 @@ final class AppContext: ObservableObject {
         Log.info("keychain", "embedded Touch ID unlock requested for \"\(databaseName)\"")
     }
 
-    /// Cancels an embedded Touch ID request when the user switches to password entry.
+    /// 用户切换到密码输入时取消正在进行的 Touch ID 请求。
     func cancelTouchIDUnlock() {
         guard biometricUnlockRequestID != nil else { return }
         biometricUnlockRequestID = nil
         Log.info("keychain", "embedded Touch ID unlock cancelled for password entry")
     }
 
-    /// Completes an embedded Touch ID request after its context has read the protected item.
+    /// Touch ID 上下文读取受保护项目后，完成对应的解锁请求。
     func completeTouchIDUnlock(
         requestID: UUID,
         databaseName requestedDatabaseName: String,
@@ -758,7 +758,7 @@ final class AppContext: ObservableObject {
         }
     }
 
-    /// erase_data_command — removes local data (cloud copies untouched).
+    /// 擦除本地应用数据；云端副本不受影响。
     /// 自毁/手动擦除必须连扩展快照、泄露哈希清单与 relay 登录态一并清:
     /// 残留的密文+信封可被离线爆破,残留令牌可枚举账户。
     func eraseAllData() {
@@ -862,7 +862,7 @@ final class AppContext: ObservableObject {
         }
     }
 
-    /// Enables AutoFill on login cards in the current vault when explicitly requested at launch.
+    /// 启动时仅在用户明确请求后，为当前库中的登录卡片启用自动填充。
     private func enableAutofillForCurrentVaultCredentials() {
         guard phase == .unlocked else { return }
         let credentialIDs = Set(database.activeCards.compactMap { card -> UUID? in
@@ -928,8 +928,7 @@ final class AppContext: ObservableObject {
         autoLockTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.autoLockTick() }
         }
-        // Any interaction with the app (typing, clicks, scrolling) counts as
-        // activity for the idle timer — not just switching the selected card.
+        // 输入、点击和滚动都算作活跃操作，不只在切换选中卡片时刷新空闲计时。
         // 本地事件监视器总在主线程触发;直接记录,避免每个按键/滚动事件都
         // 创建一次 Task(高频事件下造成不必要的调度开销)。
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]) { [weak self] event in

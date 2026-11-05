@@ -1,7 +1,7 @@
 import AppKit
 import UPasswordsCore
 
-/// Application delegate — dock reopen / quit behaviors.
+/// 管理程序坞重新打开窗口及应用退出行为。
 /// 菜单栏常驻入口由 StatusItemController 承担。
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = StatusItemController()

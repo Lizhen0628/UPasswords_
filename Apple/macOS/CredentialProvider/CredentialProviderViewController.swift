@@ -2,7 +2,7 @@ import AppKit
 import AuthenticationServices
 import SwiftUI
 
-/// Entry point for macOS system password filling.
+/// macOS 系统密码自动填充扩展的界面入口。
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     private let model = CredentialProviderModel()
     private var hostingController: NSHostingController<CredentialProviderView>?

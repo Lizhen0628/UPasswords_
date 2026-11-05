@@ -2,7 +2,7 @@ import SwiftUI
 
 import UPasswordsCore
 
-/// Compact macOS credential picker shown by the system AutoFill UI.
+/// macOS 系统自动填充界面展示的紧凑型凭据选择器。
 struct CredentialProviderView: View {
     @ObservedObject var model: CredentialProviderModel
 

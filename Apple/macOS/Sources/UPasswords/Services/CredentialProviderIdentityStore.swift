@@ -3,13 +3,13 @@ import Foundation
 
 import UPasswordsCore
 
-/// Registers non-secret credential identities for macOS AutoFill suggestions.
+/// 为 macOS 自动填充建议注册不含密码的凭据标识。
 @MainActor
 enum CredentialProviderIdentityStore {
     private static let store = ASCredentialIdentityStore.shared
 
-    /// Replaces the system index with the current vault's eligible login items.
-    /// Password values are never passed to AuthenticationServices.
+    /// 使用当前密码库中符合条件的登录项替换系统索引。
+    /// 传给 AuthenticationServices 的信息不包含密码值。
     static func replace(with cards: [Card]) {
         let enabled = cards.filter { $0.autofillEnabled }
         let withLogin = enabled.filter { !$0.login.isEmpty }

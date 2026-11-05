@@ -5,7 +5,7 @@ import UPasswordsCore
 import UPasswordsPersistence
 
 extension AppContext {
-    /// Lists encrypted conflicts for the currently unlocked, bound vault.
+    /// 获取当前已解锁且已绑定密码库的加密冲突记录。
     func syncConflicts() async throws -> [RelayClient.ConflictRecord] {
         guard phase == .unlocked, let vaultKey else {
             throw SyncError.notConfigured
@@ -22,7 +22,7 @@ extension AppContext {
         return conflicts
     }
 
-    /// Preserves an unreadable encrypted candidate locally without changing its conflict.
+    /// 将无法解密的冲突候选项加密隔离保存在本地，不改变服务端冲突状态。
     func quarantineUnreadableSyncConflictCandidate(
         _ candidate: RelayClient.ConflictCandidate,
         conflict: RelayClient.ConflictRecord
@@ -50,7 +50,7 @@ extension AppContext {
         }
     }
 
-    /// Refreshes isolated candidates, discarding entries only after the server copy is gone or readable.
+    /// 刷新隔离候选项；仅在服务端记录已删除或现可解密时才清除本地隔离记录。
     func retryQuarantinedSyncConflictCandidates() async {
         guard phase == .unlocked, syncState != .syncing,
               !rowSync.quarantinedCandidates.isEmpty else { return }
@@ -108,7 +108,7 @@ extension AppContext {
         }
     }
 
-    /// Saves a readable conflict card as an independent card without resolving its source conflict.
+    /// 将可解密的冲突卡片另存为独立卡片，不解决原有冲突。
     func saveSyncConflictCandidateAsNewItem(
         _ conflict: RelayClient.ConflictRecord,
         candidateID: String
@@ -263,7 +263,7 @@ extension AppContext {
         return .card(card)
     }
 
-    /// Resolves one reviewed candidate, then pulls the server's atomic resolution event.
+    /// 应用用户审核的候选项，再拉取服务端原子解决冲突的事件。
     func resolveSyncConflict(
         _ conflict: RelayClient.ConflictRecord,
         candidateID: String,

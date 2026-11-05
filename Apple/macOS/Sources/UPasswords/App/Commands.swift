@@ -1,12 +1,7 @@
 import SwiftUI
 import UPasswordsCore
-import UPasswordsNetworking
 
-/// Main menu: 文件/编辑/工具/视图 + standard items, with actions for
-/// addCard / addNote / addTemplate / addLabel / importData / exportData …
-///
-/// Commands run outside the window's environment and actor isolation, so every
-/// action hops to the main actor before touching the session controller.
+/// 注册 macOS 菜单命令；菜单动作先切换到主 actor，再访问会话状态。
 struct UPasswordsCommands: Commands {
     @ObservedObject private var shortcuts = ShortcutStore.shared
 
@@ -52,10 +47,7 @@ struct UPasswordsCommands: Commands {
                 perform {
                     let ctx = AppContext.shared
                     if let c = ctx.selectedCard {
-                        var t = c
-                        t.template = true
-                        t.id = UUID()
-                        ctx.database.cards.append(t)
+                        ctx.saveAsTemplate(from: c)
                         AppToast.shared.show(L10n.t("template_saved_message"))
                     }
                 }
@@ -109,12 +101,12 @@ struct UPasswordsCommands: Commands {
             }
         }
 
-        // replace default Help with branded help
+        // 替换系统默认帮助菜单，展示应用自己的帮助入口。
         CommandGroup(replacing: .help) {
             Button(L10n.t("help_command")) { perform { AppContext.shared.activeSheet = .whatsNew } }
         }
 
-        // contextual delete-key behavior for the card list
+        // 为卡片列表注册 Delete 键的上下文行为。
         CommandGroup(after: .pasteboard) {
             Button(L10n.t("delete_card_query")) {
                 perform {

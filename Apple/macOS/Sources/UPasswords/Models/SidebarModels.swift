@@ -1,8 +1,6 @@
 import Foundation
 
-/// The special sidebar entries (all cards / favorites / credit cards / notes /
-/// one-time codes / passkeys / recent, plus weak / same / compromised
-/// passwords, expiring / expired / archived / trash / templates).
+/// 侧栏内置分类及其本地化名称、图标和空状态文案。
 enum SpecialLabel: String, CaseIterable, Identifiable {
     case allCards = "all_cards_label"
     case favorites = "favorites_label"
@@ -49,7 +47,7 @@ enum SpecialLabel: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Empty-state text (Localizable `*_empty_state` keys).
+    /// 当前分类空状态提示对应的本地化文案。
     var emptyState: String {
         switch self {
         case .allCards: return L10n.t("user_empty_state")
@@ -73,31 +71,13 @@ import SwiftUI
 import UPasswordsCore
 import UPasswordsNetworking
 
-/// Sidebar selection: either a special label or a user label id.
+/// 侧栏当前选择：内置分类或用户创建的标签。
 enum SidebarSelection: Hashable {
     case special(SpecialLabel)
     case label(UUID)
-
-    static func == (l: SidebarSelection, r: SidebarSelection) -> Bool {
-        switch (l, r) {
-        case (.special(let a), .special(let b)): return a == b
-        case (.label(let a), .label(let b)): return a == b
-        default: return false
-        }
-    }
-    func hash(into h: inout Hasher) {
-        switch self {
-        case .special(let s):
-            h.combine(0)
-            h.combine(s)
-        case .label(let i):
-            h.combine(1)
-            h.combine(i)
-        }
-    }
 }
 
-/// Sort options. Values = Localizable `*_asc_text` / `*_desc_text` keys.
+/// 卡片排序方式；原始值对应本地化资源中的排序键。
 enum Sorting: String, CaseIterable, Identifiable {
     case titleAsc = "title_asc"
     case titleDesc = "title_desc"
@@ -140,7 +120,7 @@ enum Sorting: String, CaseIterable, Identifiable {
     }
 }
 
-/// Card color palette — the XML color attribute vocabulary.
+/// 数据文件中卡片颜色属性所使用的固定词汇表。
 enum CardColor: String, CaseIterable, Identifiable {
     case gray, blue, red, green, yellow, purple, orange, cyan, pink, brown, white, black
     var id: String { rawValue }

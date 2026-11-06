@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 -- Profiles use the same row contract as cards and labels. Fail the migration if an
 -- unexpected duplicate identity exists instead of silently discarding one payload.
 DROP VIEW IF EXISTS vault_sync_items;
+CREATE TABLE IF NOT EXISTS vault_user_profiles LIKE vault_items;
 
 INSERT INTO vault_items(
   vault_id,item_uuid,kind,revision,body,body_sha256,body_bytes,modified_ms,
@@ -25,6 +26,26 @@ DROP TABLE vault_user_profiles;
 
 ALTER TABLE vault_items
   ADD CONSTRAINT chk_vault_items_kind CHECK (kind IN (1, 2, 3));
+
+ALTER TABLE users
+  ADD CONSTRAINT chk_users_state CHECK (state IN ('active','deregistered')),
+  ADD CONSTRAINT chk_users_plan CHECK (plan IN ('normal','subscription','permanent'));
+
+ALTER TABLE email_codes
+  ADD CONSTRAINT chk_email_codes_purpose CHECK (purpose IN ('login','sensitive')),
+  ADD CONSTRAINT chk_email_codes_attempts CHECK (attempts >= 0);
+
+ALTER TABLE item_changes
+  ADD CONSTRAINT chk_item_changes_op CHECK (op IN (1, 2, 3, 4));
+
+ALTER TABLE item_conflicts
+  ADD CONSTRAINT chk_item_conflicts_status CHECK (status IN ('open','resolved'));
+
+ALTER TABLE item_conflict_candidates
+  ADD CONSTRAINT chk_item_conflict_candidate_disposition CHECK (disposition IN ('pending','retained'));
+
+ALTER TABLE websites
+  ADD CONSTRAINT chk_websites_status CHECK (status IN (0, 1));
 
 CREATE OR REPLACE VIEW vault_sync_items AS
 SELECT vault_id,item_uuid,kind,revision,body,body_sha256,body_bytes,modified_ms,
@@ -60,6 +81,22 @@ ALTER TABLE attachment_version_conflicts
 
 ALTER TABLE rekey_attachment_staging
   ADD CONSTRAINT fk_rekey_attachment_staging_vault
+    FOREIGN KEY (vault_id,rekey_id)
+    REFERENCES rekeys(vault_id,rekey_id)
+    ON DELETE CASCADE;
+
+ALTER TABLE rekey_staging
+  ADD COLUMN IF NOT EXISTS vault_id VARCHAR(32) NULL AFTER rekey_id,
+  ADD KEY IF NOT EXISTS idx_rekey_staging_vault(vault_id,rekey_id);
+
+UPDATE rekey_staging s
+JOIN rekeys r ON r.rekey_id=s.rekey_id
+SET s.vault_id=r.vault_id
+WHERE s.vault_id IS NULL;
+
+ALTER TABLE rekey_staging
+  MODIFY COLUMN vault_id VARCHAR(32) NOT NULL,
+  ADD CONSTRAINT fk_rekey_staging_vault
     FOREIGN KEY (vault_id,rekey_id)
     REFERENCES rekeys(vault_id,rekey_id)
     ON DELETE CASCADE;

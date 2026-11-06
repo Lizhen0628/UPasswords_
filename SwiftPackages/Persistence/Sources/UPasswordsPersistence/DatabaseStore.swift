@@ -37,6 +37,16 @@ struct BackupPackageReservation {
     let finalURL: URL
 }
 
+/// A verified backup decoded for import into a native persistence store.
+public struct RestoredVaultSnapshot {
+    public let database: PasswordDatabase
+    public let vaultKey: SymmetricKey
+    public let envelope: Data
+    public let syncState: RowSyncState
+    public let attachmentDownloadLedger: AttachmentDownloadLedger
+    public let backupHistory: Data?
+}
+
 /// 本地加密库、信封、同步状态与备份文件的存储入口。
 ///
 /// 根目录可注入以支持 App Group 和隔离测试。同步事务用进程内递归锁串行化，
@@ -85,6 +95,14 @@ public final class DatabaseStore {
     /// Restored historical attachments and conflict candidates, encrypted with the local vault key.
     public func backupHistoryURL(for name: String) -> URL {
         databasesDir.appendingPathComponent("\(name).upwhistory")
+    }
+
+    /// Reads retained backup history for one legacy file-backed vault.
+    public func loadBackupHistoryData(for name: String) throws -> Data? {
+        try validateName(name)
+        let historyURL = backupHistoryURL(for: name)
+        guard fm.fileExists(atPath: historyURL.path) else { return nil }
+        return try Data(contentsOf: historyURL)
     }
 
     private func syncTransactionURL(for name: String) -> URL {
@@ -583,12 +601,15 @@ public final class DatabaseStore {
     ///   - old: 现有本地库名。
     ///   - new: 未被占用的新合法库名。
     /// - Throws: 名称校验或文件移动失败；云端名称迁移由会话层另行编排。
-    public func rename(_ old: String, to new: String) throws {
+    public func rename(_ old: String, to new: String, allowMissingDatabase: Bool = false) throws {
         Self.syncTransactionLock.lock()
         defer { Self.syncTransactionLock.unlock() }
         try recoverSyncTransaction(for: old)
         try recoverSyncTransaction(for: new)
-        guard exists(old) else { throw StoreError(L10n.t("database_not_found_error")) }
+        let hasLegacyDatabase = exists(old)
+        guard hasLegacyDatabase || allowMissingDatabase else {
+            throw StoreError(L10n.t("database_not_found_error"))
+        }
         guard !exists(new) else { throw StoreError(L10n.t("database_already_exists_error")) }
         try validateName(new)
         Log.info("db", "rename \"\(old)\" → \"\(new)\"")
@@ -599,17 +620,19 @@ public final class DatabaseStore {
         }
         let hasLedger = fm.fileExists(atPath: oldLedger.path)
         if hasLedger { try fm.moveItem(at: oldLedger, to: newLedger) }
-        do {
-            try fm.moveItem(at: url(for: old), to: url(for: new))
-        } catch {
-            if hasLedger {
-                do {
-                    try fm.moveItem(at: newLedger, to: oldLedger)
-                } catch {
-                    Log.error("db", "attachment ledger rename rollback failed: \(error)")
+        if hasLegacyDatabase {
+            do {
+                try fm.moveItem(at: url(for: old), to: url(for: new))
+            } catch {
+                if hasLedger {
+                    do {
+                        try fm.moveItem(at: newLedger, to: oldLedger)
+                    } catch {
+                        Log.error("db", "attachment ledger rename rollback failed: \(error)")
+                    }
                 }
+                throw error
             }
-            throw error
         }
         if fm.fileExists(atPath: keyURL(for: old).path) {
             do {
@@ -669,9 +692,8 @@ public final class DatabaseStore {
         Self.syncTransactionLock.lock()
         defer { Self.syncTransactionLock.unlock() }
         try recoverSyncTransaction(for: name)
-        guard exists(name) else { return }
-        Log.warn("db", "delete \"\(name).upw\" (alsoBackups=\(alsoBackups))")
-        try fm.removeItem(at: url(for: name))
+        Log.warn("db", "delete local state for \"\(name)\" (alsoBackups=\(alsoBackups))")
+        if exists(name) { try fm.removeItem(at: url(for: name)) }
         try? fm.removeItem(at: keyURL(for: name))
         try? fm.removeItem(at: syncStateURL(for: name))
         try? fm.removeItem(at: attachmentDownloadLedgerURL(for: name))
@@ -751,8 +773,6 @@ public final class DatabaseStore {
         Self.syncTransactionLock.lock()
         defer { Self.syncTransactionLock.unlock() }
         try recoverSyncTransaction(for: name)
-        let dir = backupDir(for: name)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let data = try Data(contentsOf: url(for: name))
         guard DatabaseCipher.isV2Container(data),
               let envelope = envelopeData(for: name),
@@ -760,7 +780,30 @@ public final class DatabaseStore {
             Log.error("backup", "backup \"\(name)\" rejected: body/envelope pair is incomplete")
             throw StoreError(L10n.t("envelope_missing_error"))
         }
+        try writeBackupPair(data, envelope: envelope, name: name, now: now)
+    }
 
+    /// Writes a backup pair from the current SwiftData session without creating a local vault file.
+    public func backupSnapshot(
+        _ database: PasswordDatabase,
+        name: String,
+        vaultKey: SymmetricKey,
+        envelope: Data,
+        now: Date = Date()
+    ) throws {
+        Self.syncTransactionLock.lock()
+        defer { Self.syncTransactionLock.unlock() }
+        try validateName(name)
+        guard DatabaseCipher.envelopeChangedAt(envelope) != nil else {
+            throw StoreError(L10n.t("envelope_missing_error"))
+        }
+        let body = try DatabaseCipher.encryptBody(database.xmlData(), vaultKey: vaultKey)
+        try writeBackupPair(body, envelope: envelope, name: name, now: now)
+    }
+
+    private func writeBackupPair(_ data: Data, envelope: Data, name: String, now: Date) throws {
+        let dir = backupDir(for: name)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var stampDate = now
         var stamp = Self.backupStampFormatter.string(from: stampDate)
         while fm.fileExists(atPath: dir.appendingPathComponent("\(stamp).upw").path)
@@ -844,6 +887,68 @@ public final class DatabaseStore {
             try? fm.removeItem(at: envelopeURL)
         }
         Log.info("backup", "backup deleted: \"\(name)\"/\(url.lastPathComponent)")
+    }
+
+    /// Verifies and decrypts a backup without writing a local database or keychain item.
+    public func restoreBackupSnapshot(
+        backup: URL,
+        sourcePassword: String,
+        newPassword: String,
+        expectedPackageVerificationToken: String? = nil,
+        allowIncompletePackage: Bool = false
+    ) throws -> RestoredVaultSnapshot {
+        guard newPassword.count >= PasswordPolicy.minimumMasterPasswordLength else {
+            throw StoreError(L10n.t("minimum_password_length_error"))
+        }
+        let hasScopedAccess = backup.startAccessingSecurityScopedResource()
+        defer {
+            if hasScopedAccess { backup.stopAccessingSecurityScopedResource() }
+        }
+
+        if backup.pathExtension == BackupPackage.fileExtension {
+            let restored = try BackupPackage.prepareRestore(
+                at: backup,
+                sourcePassword: sourcePassword,
+                newPassword: newPassword,
+                expectedVerificationToken: expectedPackageVerificationToken,
+                allowIncomplete: allowIncompletePackage)
+            return RestoredVaultSnapshot(
+                database: restored.database,
+                vaultKey: restored.vaultKey,
+                envelope: restored.envelope,
+                syncState: RowSyncState(),
+                attachmentDownloadLedger: AttachmentDownloadLedger(),
+                backupHistory: restored.sealedHistory)
+        }
+
+        let data = try Data(contentsOf: backup)
+        guard DatabaseCipher.isV2Container(data) else {
+            Log.error("backup", "restore rejected: not a v2 container in \(backup.lastPathComponent)")
+            throw StoreError(L10n.t("wrong_database_format_error"))
+        }
+        let keyBackup = backup.deletingPathExtension().appendingPathExtension("upwkey")
+        let sourceEnvelope: Data
+        do {
+            sourceEnvelope = try Data(contentsOf: keyBackup)
+        } catch {
+            Log.error("backup", "restore rejected: envelope unreadable for \(backup.lastPathComponent): \(error)")
+            throw StoreError(L10n.t("envelope_missing_error"))
+        }
+        guard DatabaseCipher.envelopeChangedAt(sourceEnvelope) != nil else {
+            throw StoreError(L10n.t("envelope_missing_error"))
+        }
+        let sourceKey = try DatabaseCipher.unwrapVaultKey(sourceEnvelope, password: sourcePassword)
+        let plaintext = try DatabaseCipher.decryptBody(data, vaultKey: sourceKey)
+        let database = try PasswordDatabase.parse(plaintext)
+        let vaultKey = DatabaseCipher.generateVaultKey()
+        let envelope = try DatabaseCipher.wrapVaultKey(vaultKey, password: newPassword)
+        return RestoredVaultSnapshot(
+            database: database,
+            vaultKey: vaultKey,
+            envelope: envelope,
+            syncState: RowSyncState(),
+            attachmentDownloadLedger: AttachmentDownloadLedger(),
+            backupHistory: nil)
     }
 
     /// Restores a backup as a new, independently encrypted local database.

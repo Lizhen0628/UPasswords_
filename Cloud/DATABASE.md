@@ -52,213 +52,292 @@ IndexedDB object store 映射相同的业务表字段和语义。本地库仅保
 erDiagram
     users ||--o{ sessions : owns
     users ||--o{ vaults : owns
-    users ||..o{ audit_log : "logical user id"
+    users ||..o{ audit_log : "user_id logical"
     vaults ||--o{ vault_items : stores
     vaults ||--o{ vault_user_profiles : stores
     vaults ||--o{ item_changes : records
     vaults ||--o{ item_tombstones : retains
     vaults ||--o{ item_conflicts : tracks
-    item_conflicts ||--o{ item_conflict_candidates : contains
     vaults ||--o{ attachments : registers
+    vaults ||--o{ attachment_versions : stores
+    vaults ||--o{ attachment_tombstones : retains
     vaults ||--o{ rekeys : locks
+    item_conflicts ||--o{ item_conflict_candidates : contains
+    item_conflicts ||--o{ attachment_version_conflicts : retains
+    item_conflicts ||..o{ rekey_conflict_staging : "conflict_id logical"
     rekeys ||--o{ rekey_staging : stages
+    rekeys ||--o{ rekey_attachment_staging : stages
+    rekeys ||--o| rekey_conflict_manifests : inventories
+    rekeys ||--o{ rekey_conflict_staging : stages
+    attachment_versions ||--o{ rekey_attachment_staging : references
+    attachment_versions ||--o{ attachment_version_conflicts : retains
     websites ||--o{ website_domains : maps
-    vault_items ||..o{ attachments : "card_uuid logical reference"
+    vault_items ||..o{ attachments : "card_uuid logical"
+    attachments ||..o{ attachment_versions : "current content_version"
+    vault_items ||..|| vault_sync_items : "UNION ALL view"
+    vault_user_profiles ||..|| vault_sync_items : "UNION ALL view"
     email_codes
 
     users {
-        varchar id PK
-        varchar email_hmc UK
-        text email_enc
-        varchar state
-        varchar plan
-        text totp_secret
-        bigint created_ms
-        bigint last_login_ms
-        bigint deregistered_at_ms
+        varchar id PK "随机用户 ID"
+        varchar email_hmc UK "规范化邮箱的 HMAC 查询键"
+        text email_enc "应用密钥加密的邮箱"
+        varchar state "账户状态"
+        varchar plan "账户方案"
+        text totp_secret "TOTP 密钥"
+        bigint created_ms "账户创建时间"
+        bigint last_login_ms "最近登录时间"
+        bigint deregistered_at_ms "注销时间及物理清理排程起点"
     }
     email_codes {
-        varchar email_hmc PK
-        varchar purpose PK
-        varchar code_hash
-        varchar ip
-        bigint expires_ms
-        int attempts
-        bigint used_ms
-        bigint created_ms
+        varchar email_hmc PK "规范化邮箱的 HMAC 查询键"
+        varchar purpose PK "验证码用途，如登录或敏感操作"
+        varchar code_hash "验证码的键控哈希"
+        varchar ip "请求来源 IP"
+        bigint expires_ms "验证码过期时间"
+        int attempts "已尝试次数"
+        bigint used_ms "验证码使用时间"
+        bigint created_ms "验证码创建时间"
     }
     sessions {
-        varchar id PK
-        varchar user_id FK
-        char token_hash UK
-        varchar device_name
-        varchar platform
-        bigint created_ms
-        bigint last_seen_ms
-        bigint expires_ms
-        bigint revoked_ms
+        varchar id PK "会话 ID"
+        varchar user_id FK "所属用户 ID"
+        char token_hash UK "Bearer 令牌的 SHA-256 哈希"
+        varchar device_name "设备名称"
+        varchar platform "客户端平台"
+        bigint created_ms "会话创建时间"
+        bigint last_seen_ms "最近活动时间"
+        bigint expires_ms "会话过期时间"
+        bigint revoked_ms "会话撤销时间"
     }
     vaults {
-        varchar vault_id PK
-        varchar user_id FK
-        varchar name
-        bigint password_version
-        bigint password_changed_ms
-        text envelope_enc
-        bigint envelope_changed_ms
-        bigint head_seq
-        bigint changes_floor_seq
-        int item_count
-        bigint attach_bytes
-        bigint created_ms
-        bigint updated_ms
+        varchar vault_id PK "密码库 ID"
+        varchar user_id FK "所属用户 ID"
+        varchar name "密码库名称"
+        bigint password_version "单调递增的密码版本"
+        bigint password_changed_ms "密码变更时间"
+        text envelope_enc "服务端密钥加密的库密钥信封"
+        bigint envelope_changed_ms "信封更新时间"
+        bigint head_seq "变更日志当前高水位"
+        bigint changes_floor_seq "变更日志保留地板"
+        int item_count "条目配额计数"
+        bigint attach_bytes "附件字节配额计数"
+        bigint created_ms "密码库创建时间"
+        bigint updated_ms "密码库更新时间"
     }
     vault_items {
-        varchar vault_id PK
-        char item_uuid PK
-        tinyint kind
-        bigint revision
-        blob body
-        char body_sha256
-        int body_bytes
-        bigint modified_ms
-        bigint created_ms
-        bigint updated_ms
-        varchar origin_session_id
-        varchar origin_device_name
-        varchar origin_platform
+        varchar vault_id PK "所属密码库 ID"
+        char item_uuid PK "客户端生成的条目 UUID"
+        tinyint kind "条目类型"
+        bigint revision "条目修订号"
+        blob body "条目密文"
+        char body_sha256 "条目密文 SHA-256"
+        int body_bytes "条目密文字节数"
+        bigint modified_ms "客户端条目修改时间"
+        bigint created_ms "条目创建时间"
+        bigint updated_ms "服务端最近写入时间"
+        varchar origin_session_id "来源会话快照"
+        varchar origin_device_name "来源设备名称快照"
+        varchar origin_platform "来源平台快照"
     }
     vault_user_profiles {
-        varchar vault_id PK
-        char item_uuid PK
-        tinyint kind
-        bigint revision
-        blob body
-        char body_sha256
-        int body_bytes
-        bigint modified_ms
-        bigint created_ms
-        bigint updated_ms
-        varchar origin_session_id
-        varchar origin_device_name
-        varchar origin_platform
+        varchar vault_id PK "所属密码库 ID"
+        char item_uuid PK "客户端生成的个人资料 UUID"
+        tinyint kind "固定为个人资料类型"
+        bigint revision "个人资料修订号"
+        blob body "个人资料密文"
+        char body_sha256 "个人资料密文 SHA-256"
+        int body_bytes "个人资料密文字节数"
+        bigint modified_ms "客户端修改时间"
+        bigint created_ms "个人资料创建时间"
+        bigint updated_ms "服务端最近写入时间"
+        varchar origin_session_id "来源会话快照"
+        varchar origin_device_name "来源设备名称快照"
+        varchar origin_platform "来源平台快照"
     }
     item_changes {
-        bigint seq PK
-        varchar vault_id FK
-        char item_uuid
-        tinyint op
-        bigint revision
-        char resolved_item_uuid
-        varchar conflict_id
-        bigint base_revision
-        varchar winner_candidate_id
-        tinyint winner_kind
-        tinyint winner_op
-        varchar session_id
-        bigint created_ms
+        bigint seq PK "全局单调变更序号"
+        varchar vault_id FK "所属密码库 ID"
+        char item_uuid "发生变更的条目 UUID"
+        tinyint op "变更或冲突裁决操作类型"
+        bigint revision "变更后的条目修订号"
+        char resolved_item_uuid "裁决生成的条目 UUID"
+        varchar conflict_id "关联冲突 ID"
+        bigint base_revision "冲突裁决所基于的修订号"
+        varchar winner_candidate_id "胜出候选 ID"
+        tinyint winner_kind "胜出候选类型"
+        tinyint winner_op "胜出候选操作类型"
+        tinyint resolution_type "裁决方式类型"
+        varchar session_id "发起操作的会话 ID 快照"
+        bigint created_ms "变更事件创建时间"
     }
     item_tombstones {
-        varchar vault_id PK
-        char item_uuid PK
-        bigint revision
-        bigint seq
-        bigint deleted_ms
-        varchar session_id
-        varchar device_name
-        varchar platform
+        varchar vault_id PK, FK "所属密码库 ID"
+        char item_uuid PK "永久删除条目 UUID"
+        bigint revision "删除时的条目修订号"
+        bigint seq "对应删除事件序号"
+        bigint deleted_ms "删除时间"
+        varchar session_id "执行删除的会话快照"
+        varchar device_name "执行删除的设备快照"
+        varchar platform "执行删除的平台快照"
     }
     item_conflicts {
-        varchar conflict_id PK
-        varchar vault_id FK
-        char item_uuid
-        bigint base_revision
-        bigint current_revision
-        bigint current_deleted_seq
-        bigint generation
-        varchar status
-        bigint created_ms
-        bigint updated_ms
-        bigint resolved_ms
-        bigint expires_ms
-        varchar selected_candidate_id
-        char resolved_item_uuid
+        varchar conflict_id PK "冲突 ID"
+        varchar vault_id FK "所属密码库 ID"
+        char item_uuid "发生冲突的原条目 UUID"
+        bigint base_revision "冲突开始时的基础修订号"
+        bigint current_revision "云端当前修订号"
+        bigint current_deleted_seq "当前删除事件序号，未删除时为 0"
+        bigint generation "冲突候选集合代数"
+        varchar status "冲突状态"
+        bigint created_ms "冲突创建时间"
+        bigint updated_ms "冲突更新时间"
+        bigint resolved_ms "冲突裁决时间"
+        bigint expires_ms "冲突过期时间"
+        varchar selected_candidate_id "选中的候选 ID"
+        char resolved_item_uuid "裁决生成的条目 UUID"
     }
     item_conflict_candidates {
-        varchar candidate_id PK
-        varchar conflict_id FK
-        tinyint kind
-        tinyint op
-        bigint revision
-        blob body
-        char body_sha256
-        char candidate_fingerprint
-        bigint modified_ms
-        varchar source_session_id
-        varchar source_device_name
-        varchar source_platform
-        bigint committed_ms
-        varchar disposition
-        bigint expires_ms
+        varchar candidate_id PK "候选 ID"
+        varchar conflict_id PK "所属冲突 ID"
+        tinyint kind "候选条目类型"
+        tinyint op "候选操作类型"
+        bigint revision "候选修订号"
+        blob body "候选条目密文，删除候选可空"
+        char body_sha256 "候选密文 SHA-256"
+        char candidate_fingerprint "候选幂等指纹"
+        bigint modified_ms "候选条目的客户端修改时间"
+        varchar source_session_id "候选来源会话快照"
+        varchar source_device_name "候选来源设备快照"
+        varchar source_platform "候选来源平台快照"
+        bigint committed_ms "候选提交时间"
+        varchar disposition "候选处理状态"
+        bigint expires_ms "候选保留到期时间"
     }
     attachments {
-        varchar vault_id PK
-        char attach_uuid PK
-        char card_uuid
-        varchar object_key
-        varbinary dek_wrapped
-        char sha256
-        bigint bytes
-        bigint created_ms
+        varchar vault_id PK "所属密码库 ID"
+        char attach_uuid PK "附件 ID"
+        char content_version "当前附件内容版本 ID"
+        char card_uuid "所属卡片 UUID，逻辑引用"
+        varchar object_key "R2 对象路径"
+        varbinary dek_wrapped "由库密钥包装的附件数据密钥"
+        char sha256 "附件密文 SHA-256"
+        bigint bytes "附件密文字节数"
+        bigint created_ms "附件创建时间"
     }
     rekeys {
-        varchar rekey_id PK
-        varchar vault_id FK
-        text new_envelope_enc
-        bigint new_password_version
-        int item_total
-        int dek_total
-        int item_staged
-        int dek_staged
-        bigint expires_ms
-        bigint created_ms
+        varchar rekey_id PK "改密任务 ID"
+        varchar vault_id FK "所属密码库 ID"
+        text new_envelope_enc "新库密钥信封"
+        bigint new_password_version "改密后的密码版本"
+        int item_total "待重加密条目总数"
+        int dek_total "待重新包装附件密钥总数"
+        int item_staged "已暂存条目数"
+        int dek_staged "已暂存附件密钥数"
+        bigint expires_ms "改密任务过期时间"
+        bigint created_ms "改密任务创建时间"
     }
     rekey_staging {
-        varchar rekey_id PK
-        char item_uuid PK
-        tinyint kind
-        blob payload
-        char sha256
+        varchar rekey_id PK "所属改密任务 ID"
+        char item_uuid PK "条目或附件 UUID"
+        tinyint kind "暂存内容类型"
+        blob payload "新密钥下的条目密文或包装密钥"
+        char sha256 "暂存内容 SHA-256"
     }
     audit_log {
-        bigint id PK
-        varchar user_id
-        varchar vault_id
-        varchar action
-        varchar detail
-        bigint ts_ms
+        bigint id PK "审计记录 ID"
+        varchar user_id "关联用户 ID，不设外键"
+        varchar vault_id "关联密码库 ID，不设外键"
+        varchar action "审计操作类型"
+        varchar detail "非敏感审计详情"
+        bigint ts_ms "审计事件时间"
     }
     websites {
-        bigint site_id PK
-        varchar name_zh
-        varchar name_en
-        varchar home_url
-        char icon_sha256
-        varchar icon_mime
-        int icon_bytes
-        bigint icon_updated_ms
-        tinyint status
-        bigint created_ms
-        bigint updated_ms
+        bigint site_id PK "网站目录 ID"
+        varchar name_zh "网站中文名称"
+        varchar name_en "网站英文名称"
+        varchar home_url "网站首页 URL"
+        char icon_sha256 "R2 图标内容 SHA-256"
+        varchar icon_mime "图标 MIME 类型"
+        int icon_bytes "图标字节数"
+        bigint icon_updated_ms "图标更新时间"
+        tinyint status "网站状态"
+        bigint created_ms "目录记录创建时间"
+        bigint updated_ms "目录记录更新时间"
     }
     website_domains {
-        varchar domain PK
-        bigint site_id FK
-        boolean is_primary
+        varchar domain PK "规范化域名"
+        bigint site_id FK "所属网站目录 ID"
+        boolean is_primary "是否为主域名"
+    }
+    attachment_versions {
+        varchar vault_id PK, FK "所属密码库 ID"
+        char attach_uuid PK "附件 ID"
+        char content_version PK "不可变内容版本 ID"
+        char card_uuid "所属卡片 UUID，逻辑引用"
+        varchar object_key "R2 对象路径"
+        varbinary dek_wrapped "由库密钥包装的附件数据密钥"
+        char sha256 "附件密文 SHA-256"
+        bigint bytes "附件密文字节数"
+        bigint created_ms "内容版本创建时间"
+        bigint retired_ms "内容版本退役时间"
+        bigint unreferenced_ms "版本变为未引用的时间"
+        bigint purge_started_ms "R2 对象清理开始时间"
+    }
+    rekey_attachment_staging {
+        varchar rekey_id PK "所属改密任务 ID"
+        varchar vault_id "用于匹配附件版本的密码库 ID"
+        char attach_uuid PK "附件 ID"
+        char content_version PK "附件内容版本 ID"
+        varbinary dek_wrapped "新库密钥包装的附件数据密钥"
+    }
+    attachment_version_conflicts {
+        varchar vault_id PK "附件版本所属密码库 ID"
+        varchar conflict_id PK "关联冲突 ID"
+        char attach_uuid PK "附件 ID"
+        char content_version PK "被冲突候选引用的内容版本 ID"
+        bigint release_after_ms "冲突引用可释放时间"
+    }
+    attachment_tombstones {
+        varchar vault_id PK "所属密码库 ID"
+        char attach_uuid PK "已删除附件 ID"
+        char card_uuid "原所属卡片 UUID，逻辑引用"
+        bigint deleted_ms "附件删除时间"
+    }
+    rekey_conflict_manifests {
+        varchar rekey_id PK "所属改密任务 ID"
+        varchar vault_id "所属密码库 ID"
+        int candidate_total "改密清单中的候选总数"
+        int candidate_staged "已暂存的候选数"
+    }
+    rekey_conflict_staging {
+        varchar rekey_id PK "所属改密任务 ID"
+        varchar conflict_id PK "冲突 ID，逻辑引用"
+        varchar old_candidate_id PK "改密前候选 ID"
+        varchar vault_id "所属密码库 ID"
+        varchar new_candidate_id "改密后候选 ID"
+        char candidate_fingerprint "候选幂等指纹"
+        blob body "新密钥下的候选密文"
+        char body_sha256 "候选密文 SHA-256"
+    }
+    vault_sync_items {
+        varchar vault_id "所属密码库 ID"
+        char item_uuid "条目或个人资料 UUID"
+        tinyint kind "条目类型"
+        bigint revision "修订号"
+        blob body "数据密文"
+        char body_sha256 "数据密文 SHA-256"
+        int body_bytes "数据密文字节数"
+        bigint modified_ms "客户端修改时间"
+        bigint created_ms "数据创建时间"
+        bigint updated_ms "服务端最近写入时间"
+        varchar origin_session_id "来源会话快照"
+        varchar origin_device_name "来源设备名称快照"
+        varchar origin_platform "来源平台快照"
     }
 ~~~
 
-email_codes 通过 HMAC 邮箱键匹配用户，没有外键；这使首次注册前也能保存验证码。audit_log 的 user_id 和 vault_id 是可空审计属性，不设外键，以便保留注销或删除后的审计记录。ER 图中的附件到卡片关系也是逻辑关系，不是数据库约束。
+字段后的双引号文字为含义备注，不是数据库列。`vault_sync_items` 是由 `vault_items` 和 `vault_user_profiles` 通过 `UNION ALL` 组成的视图，不是基础表。`email_codes` 通过 HMAC 邮箱键匹配用户，没有外键；这使首次注册前也能保存验证码。`audit_log` 的 `user_id` 和 `vault_id` 是可空审计属性，不设外键，以便保留注销或删除后的审计记录。ER 图中的附件到卡片、当前附件到内容版本关系均为逻辑关联，不是数据库约束。
 
 ## 表与约束
 

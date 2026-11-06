@@ -35,7 +35,7 @@ extension AppContext {
 
         let startedAt = Date()
         Log.info("db", "card import started source=\"\(sourceName)\" destination=\"\(databaseName)\" selected=\(selectedCardIDs.count)")
-        let source = try store.loadCardImportSource(
+        let source = try loadCardImportSource(
             name: sourceName, password: sourcePassword, matching: sourceFingerprint)
         let plan = try CrossDatabaseCardImporter.makePlan(
             from: source,
@@ -49,7 +49,7 @@ extension AppContext {
         rowSync = plan.syncState
         selectedCardId = plan.importedCardIDs.first
         lastActivity = Date()
-        SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+        pushExtensionSnapshot(database: database, name: databaseName, vaultKey: vaultKey)
         Log.info(
             "db",
             "imported cards from \"\(sourceName)\" into \"\(databaseName)\" count=\(plan.importedCardIDs.count) labels=\(plan.createdLabelCount) elapsedMs=\(Int(Date().timeIntervalSince(startedAt) * 1000))")

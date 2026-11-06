@@ -26,8 +26,8 @@ struct DatabaseInfoSheet: View {
                     infoRow(L10n.t("labels_text"), "\(ctx.database.labels.count)")
                     infoRow(L10n.db("templates_label"), "\(ctx.database.templateCards.count)")
                     infoRow(L10n.t("cloud_prompt"), ctx.relayAccountEmail ?? L10n.t("none_cloud"))
-                    if let size = try? FileManager.default.attributesOfItem(atPath: DatabaseStore.shared.url(for: ctx.databaseName).path)[.size] as? Int {
-                        infoRow(L10n.t("size_prompt"), ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                    if let size = try? ctx.nativeStore?.estimatedStorageBytes(vaultName: ctx.databaseName) {
+                        infoRow(L10n.t("size_prompt"), ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                     }
                     infoRow(L10n.t("security_title"),
                             "PBKDF2-SHA256 ×\(DatabaseCipher.iterations) + AES-256-GCM")
@@ -200,8 +200,12 @@ struct ManageDatabasesSheet: View {
                                 }
                                 Divider()
                                 Button(L10n.t("delete_button"), role: .destructive) {
-                                    try? ctx.store.delete(name: db.name)
-                                    ctx.objectWillChange.send()
+                                    do {
+                                        try ctx.deleteManagedDatabase(name: db.name)
+                                        ctx.objectWillChange.send()
+                                    } catch {
+                                        self.error = error.localizedDescription
+                                    }
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
@@ -237,7 +241,7 @@ struct ManageDatabasesSheet: View {
     @MainActor private func create() {
         let pwd = ctx.password.isEmpty ? randomPassword() : ctx.password
         do {
-            try ctx.store.create(name: newName, password: pwd)
+            try ctx.createManagedDatabase(name: newName, password: pwd)
             newName = ""
             error = ""
             AppToast.shared.show(L10n.t("new_database_created_message"))
@@ -247,7 +251,7 @@ struct ManageDatabasesSheet: View {
         }
     }
 
-    private func rename(_ db: DatabaseFile) {
+    private func rename(_ db: AppContext.DatabaseSummary) {
         let alert = NSAlert()
         alert.messageText = L10n.t("rename_database_title")
         alert.informativeText = L10n.t("rename_database_on_all_devices_message")
@@ -271,7 +275,7 @@ struct ManageDatabasesSheet: View {
         }
     }
 
-    private func switchTo(_ db: DatabaseFile) {
+    private func switchTo(_ db: AppContext.DatabaseSummary) {
         // 先验证目标库密码,成功才切换(不再走「先切库再锁屏」的往返)
         ctx.promptUnlockAndSwitch(to: db.name)
     }

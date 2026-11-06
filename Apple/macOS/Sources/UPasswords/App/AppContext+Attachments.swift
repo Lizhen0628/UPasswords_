@@ -148,6 +148,46 @@ extension AppContext {
         }
     }
 
+    /// Includes locally cached attachment bytes in a backup without changing the active view.
+    func databaseForBackup() throws -> PasswordDatabase {
+        guard let nativeStore, let vaultKey else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
+        }
+        var snapshot = database
+        for cardIndex in snapshot.cards.indices {
+            let cardID = snapshot.cards[cardIndex].id
+            for index in snapshot.cards[cardIndex].images.indices {
+                try hydrateBackupAttachment(
+                    &snapshot.cards[cardIndex].images[index], cardID: cardID,
+                    store: nativeStore, vaultKey: vaultKey)
+            }
+            for index in snapshot.cards[cardIndex].files.indices {
+                try hydrateBackupAttachment(
+                    &snapshot.cards[cardIndex].files[index], cardID: cardID,
+                    store: nativeStore, vaultKey: vaultKey)
+            }
+        }
+        return snapshot
+    }
+
+    private func hydrateBackupAttachment(
+        _ attachment: inout Attachment,
+        cardID: UUID,
+        store: SwiftDataVaultStore,
+        vaultKey: SymmetricKey
+    ) throws {
+        guard attachment.data == nil else { return }
+        let version = AttachmentDownloadLedger.Version(
+            cardID: cardID, attachmentID: attachment.id, contentVersion: attachment.contentVersion)
+        guard attachmentCacheBytes[version] != nil else { return }
+        guard let data = try store.loadAttachmentContent(
+            vaultName: databaseName, cardID: cardID, attachmentID: attachment.id,
+            contentVersion: attachment.contentVersion, vaultKey: vaultKey),
+              attachment.installDownloadedContent(data, for: attachment.contentVersion) else {
+            throw DatabaseStore.StoreError(L10n.t("database_corrupt_error"))
+        }
+    }
+
     private func loadCachedAttachment(
         _ attachment: inout Attachment,
         cardID: UUID,
@@ -260,11 +300,13 @@ extension AppContext {
     private var isAttachmentSessionUnlocked: Bool { phase == .unlocked }
 
     private func updateAttachmentLedger(_ update: (inout AttachmentDownloadLedger) -> Void) throws {
-        var ledger = try attachmentDownloadLedger ?? store.loadAttachmentDownloadLedger(for: databaseName)
+        guard let nativeStore else { throw DatabaseStore.StoreError(L10n.t("sync_error")) }
+        var ledger = try attachmentDownloadLedger
+            ?? nativeStore.loadAttachmentDownloadLedger(vaultName: databaseName)
         let previous = ledger
         update(&ledger)
         if ledger != previous {
-            try store.saveAttachmentDownloadLedger(ledger, for: databaseName)
+            try nativeStore.saveAttachmentDownloadLedger(ledger, vaultName: databaseName)
         }
         objectWillChange.send()
         attachmentDownloadLedger = ledger
@@ -353,7 +395,7 @@ extension AppContext {
                     if selectedCardId != cardID {
                         releaseCachedAttachments(cardID: cardID)
                     }
-                    SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+                    pushExtensionSnapshot(database: current, name: name, vaultKey: snapshotKey)
                     try updateAttachmentLedger {
                         $0.recordSuccess(for: version)
                         $0.reconcile(with: current)
@@ -415,11 +457,12 @@ extension AppContext {
         let requiredBytes = max(64 * 1024 * 1024, incomingBytes * 4)
         if let available, available < requiredBytes { throw CocoaError(.fileWriteOutOfSpace) }
         guard !plan.evictedVersions.isEmpty else { return }
-        try store.saveAttachmentDownloadLedger(plan.ledger, for: databaseName)
+        guard let nativeStore else { throw DatabaseStore.StoreError(L10n.t("sync_error")) }
+        try nativeStore.saveAttachmentDownloadLedger(plan.ledger, vaultName: databaseName)
         attachmentDownloadLedger = plan.ledger
         try commitSyncSnapshot(plan.database, name: databaseName, vaultKey: vaultKey, state: rowSync)
         for version in plan.evictedVersions {
-            try nativeStore?.evictAttachmentContent(
+            try nativeStore.evictAttachmentContent(
                 vaultName: databaseName,
                 attachmentID: version.identity.attachmentID,
                 contentVersion: version.contentVersion
@@ -429,7 +472,7 @@ extension AppContext {
         for version in plan.evictedVersions {
             attachmentCacheBytes.removeValue(forKey: version)
         }
-        SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+        pushExtensionSnapshot(database: plan.database, name: databaseName, vaultKey: vaultKey)
         Log.info("sync", "attachment cache evicted versions=\(plan.evictedVersions.count) cachedBytes=\(plan.cachedBytes)")
     }
 

@@ -60,6 +60,34 @@ final class SwiftDataVaultStoreTests: XCTestCase {
         try native.deleteAllVaults()
     }
 
+    func testRestoreFromFilesWritesOnlySwiftDataVault() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upw-swiftdata-file-restore-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sourceStore = DatabaseStore(root: root.appendingPathComponent("source", isDirectory: true))
+        try sourceStore.create(name: "Source", password: "source-password")
+        let sourceBody = sourceStore.url(for: "Source")
+        let sourceEnvelope = sourceStore.keyURL(for: "Source")
+        let destinationRoot = root.appendingPathComponent("destination", isDirectory: true)
+        let destinationStore = DatabaseStore(root: destinationRoot)
+        let nativeStore = try SwiftDataVaultStore(root: destinationRoot)
+
+        try nativeStore.restoreVaultFromFiles(
+            bodyURL: sourceBody,
+            envelopeURL: sourceEnvelope,
+            name: "Restored",
+            password: "source-password"
+        )
+
+        XCTAssertTrue(try nativeStore.containsVault(name: "Restored"))
+        XCTAssertFalse(destinationStore.exists("Restored"))
+        XCTAssertEqual(
+            try nativeStore.loadUnlocked(name: "Restored", password: "source-password").0.cards.count,
+            PasswordDatabase.createDefault().cards.count
+        )
+    }
+
     @MainActor
     func testLegacyProfileRowsMoveToDedicatedTableWithoutDataLoss() throws {
         let root = FileManager.default.temporaryDirectory
@@ -73,7 +101,7 @@ final class SwiftDataVaultStoreTests: XCTestCase {
             let native = try SwiftDataVaultStore(root: root)
             _ = try native.importLegacyIfNeeded(
                 name: "Main", password: "migration-password", legacyStore: legacy)
-            let (database, key) = try legacy.loadUnlocked(name: "Main", password: "migration-password")
+            let (database, key) = try native.loadUnlocked(name: "Main", password: "migration-password")
             var profile = UserProfile(id: profileID)
             profile.fields = [Field(name: "email", value: "private@example.test")]
             profile.modified = 1_700_000_000_000

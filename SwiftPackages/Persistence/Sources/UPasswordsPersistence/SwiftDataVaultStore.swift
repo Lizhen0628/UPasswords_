@@ -15,6 +15,9 @@ public final class LocalVaultRecord {
     public var envelopeEnc: Data
     public var createdMS: Int64
     public var updatedMS: Int64
+    public var syncStateData: Data?
+    public var attachmentDownloadLedgerData: Data?
+    public var backupHistoryData: Data?
 
     public init(
         vaultID: String,
@@ -23,7 +26,10 @@ public final class LocalVaultRecord {
         passwordChangedMS: Int64,
         envelopeEnc: Data,
         createdMS: Int64,
-        updatedMS: Int64
+        updatedMS: Int64,
+        syncStateData: Data? = nil,
+        attachmentDownloadLedgerData: Data? = nil,
+        backupHistoryData: Data? = nil
     ) {
         self.vaultID = vaultID
         self.name = name
@@ -32,6 +38,9 @@ public final class LocalVaultRecord {
         self.envelopeEnc = envelopeEnc
         self.createdMS = createdMS
         self.updatedMS = updatedMS
+        self.syncStateData = syncStateData
+        self.attachmentDownloadLedgerData = attachmentDownloadLedgerData
+        self.backupHistoryData = backupHistoryData
     }
 }
 
@@ -199,6 +208,189 @@ public final class SwiftDataVaultStore {
         try fetchVault(name: name) != nil
     }
 
+    /// Returns vault metadata without decrypting business rows.
+    public func listVaults() throws -> [LocalVaultRecord] {
+        try context.fetch(FetchDescriptor<LocalVaultRecord>()).sorted { $0.name < $1.name }
+    }
+
+    /// Creates an encrypted vault directly in SwiftData.
+    public func createVault(name: String, password: String, now: Date = Date()) throws {
+        guard name.range(of: "^[A-Za-z0-9]+$", options: .regularExpression) != nil else {
+            throw DatabaseStore.StoreError(L10n.t("database_name_error"))
+        }
+        guard try fetchVault(name: name) == nil else {
+            throw DatabaseStore.StoreError(L10n.t("database_already_exists_error"))
+        }
+        let database = PasswordDatabase.createDefault(now: now)
+        let vaultKey = DatabaseCipher.generateVaultKey()
+        let envelope = try DatabaseCipher.wrapVaultKey(vaultKey, password: password)
+        try replace(
+            database,
+            name: name,
+            envelope: envelope,
+            vaultKey: vaultKey,
+            syncState: RowSyncState(),
+            attachmentDownloadLedger: AttachmentDownloadLedger()
+        )
+        PasswordStore.savePassword(password, databaseName: name)
+        Log.info("db", "created SwiftData vault \"\(name)\"")
+    }
+
+    /// Restores an encrypted body/envelope pair directly into SwiftData.
+    public func restoreVaultFromFiles(
+        bodyURL: URL,
+        envelopeURL: URL,
+        name: String,
+        password: String
+    ) throws {
+        guard name.range(of: "^[A-Za-z0-9]+$", options: .regularExpression) != nil else {
+            throw DatabaseStore.StoreError(L10n.t("database_name_error"))
+        }
+        guard try fetchVault(name: name) == nil else {
+            throw DatabaseStore.StoreError(L10n.t("database_already_exists_error"))
+        }
+
+        let body: Data
+        let envelope: Data
+        do {
+            body = try Data(contentsOf: bodyURL)
+            envelope = try Data(contentsOf: envelopeURL)
+        } catch {
+            Log.error("db", "restore from local files unreadable (\(bodyURL.lastPathComponent)): \(error)")
+            throw DatabaseStore.StoreError(L10n.t("local_files_unreadable_error"))
+        }
+        guard DatabaseCipher.isV2Container(body) else {
+            throw DatabaseCipher.CipherError(message: L10n.t("wrong_database_format_error"))
+        }
+        guard DatabaseCipher.envelopeChangedAt(envelope) != nil else {
+            throw DatabaseCipher.CipherError(message: L10n.t("envelope_missing_error"))
+        }
+        let vaultKey = try DatabaseCipher.unwrapVaultKey(envelope, password: password)
+        let database = try PasswordDatabase.parse(DatabaseCipher.decryptBody(body, vaultKey: vaultKey))
+        try replace(
+            database,
+            name: name,
+            envelope: envelope,
+            vaultKey: vaultKey,
+            syncState: RowSyncState(),
+            attachmentDownloadLedger: AttachmentDownloadLedger()
+        )
+        PasswordStore.savePassword(password, databaseName: name)
+        Log.info("db", "restored SwiftData vault \"\(name)\" from local files cards=\(database.cards.count)")
+    }
+
+    /// Returns an encrypted password envelope for a vault.
+    public func envelopeData(vaultName: String) throws -> Data {
+        guard let vault = try fetchVault(name: vaultName) else {
+            throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+        }
+        return vault.envelopeEnc
+    }
+
+    /// Loads retained backup history authenticated by the current vault key.
+    public func loadBackupHistory(
+        vaultName: String,
+        vaultKey: SymmetricKey
+    ) throws -> BackupPackage.RestoredHistory? {
+        guard let sealedHistory = try fetchVault(name: vaultName)?.backupHistoryData else { return nil }
+        return try BackupPackage.openRestoredHistory(sealedHistory, vaultKey: vaultKey)
+    }
+
+    /// Returns durable row-sync state, or nil when the vault predates its SwiftData state.
+    public func loadSyncState(vaultName: String) throws -> RowSyncState? {
+        guard let data = try fetchVault(name: vaultName)?.syncStateData else { return nil }
+        return try JSONDecoder().decode(RowSyncState.self, from: data)
+    }
+
+    /// Persists row-sync state in the SwiftData vault record.
+    public func saveSyncState(_ state: RowSyncState, vaultName: String) throws {
+        guard let vault = try fetchVault(name: vaultName) else {
+            throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+        }
+        vault.syncStateData = try JSONEncoder().encode(state)
+        vault.updatedMS = Int64(Date().timeIntervalSince1970 * 1000)
+        try context.save()
+    }
+
+    /// Loads local attachment retry and retention policy for a vault.
+    public func loadAttachmentDownloadLedger(vaultName: String) throws -> AttachmentDownloadLedger {
+        guard let data = try fetchVault(name: vaultName)?.attachmentDownloadLedgerData else {
+            return AttachmentDownloadLedger()
+        }
+        return try JSONDecoder().decode(AttachmentDownloadLedger.self, from: data)
+    }
+
+    /// Authenticates a source vault and returns a stable fingerprint of its encrypted rows.
+    public func loadCardImportSource(
+        name: String,
+        password: String,
+        matching fingerprint: Data? = nil
+    ) throws -> CrossDatabaseCardImporter.SourceSnapshot {
+        let startedAt = Date()
+        Log.info("db", "card import source verification started for \"\(name)\"")
+        do {
+            let (database, _) = try loadUnlocked(name: name, password: password, hydrateAttachments: false)
+            guard let vault = try fetchVault(name: name) else {
+                throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+            }
+            let itemRows = try fetchItems(vaultID: vault.vaultID).sorted { $0.rowKey < $1.rowKey }
+            let profileRows = try fetchProfiles(vaultID: vault.vaultID).sorted { $0.rowKey < $1.rowKey }
+            var fingerprintInput = Data()
+            for row in itemRows {
+                fingerprintInput.append(contentsOf: row.rowKey.utf8)
+                fingerprintInput.append(0)
+                fingerprintInput.append(contentsOf: row.bodySHA256.utf8)
+                fingerprintInput.append(0)
+            }
+            for row in profileRows {
+                fingerprintInput.append(contentsOf: row.rowKey.utf8)
+                fingerprintInput.append(0)
+                fingerprintInput.append(contentsOf: row.bodySHA256.utf8)
+                fingerprintInput.append(0)
+            }
+            let actualFingerprint = Data(SHA256.hash(data: fingerprintInput))
+            if let fingerprint, fingerprint != actualFingerprint {
+                throw CrossDatabaseCardImporter.ImportError.selectionChanged
+            }
+            Log.info(
+                "db",
+                "card import source verified for \"\(name)\" cards=\(database.cards.count) elapsedMs=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
+            return CrossDatabaseCardImporter.SourceSnapshot(
+                database: database,
+                fingerprint: actualFingerprint
+            )
+        } catch {
+            Log.error("db", "card import source verification failed for \"\(name)\": \(error)")
+            throw error
+        }
+    }
+
+    /// Persists local attachment retry and retention policy in SwiftData.
+    public func saveAttachmentDownloadLedger(
+        _ ledger: AttachmentDownloadLedger,
+        vaultName: String
+    ) throws {
+        guard let vault = try fetchVault(name: vaultName) else {
+            throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+        }
+        vault.attachmentDownloadLedgerData = try JSONEncoder().encode(ledger)
+        vault.updatedMS = Int64(Date().timeIntervalSince1970 * 1000)
+        try context.save()
+    }
+
+    /// Estimates the persisted bytes for one vault, including encrypted attachment cache.
+    public func estimatedStorageBytes(vaultName: String) throws -> Int64 {
+        guard let vault = try fetchVault(name: vaultName) else {
+            throw DatabaseStore.StoreError(L10n.t("database_not_found_error"))
+        }
+        let itemBytes = try fetchItems(vaultID: vault.vaultID).reduce(Int64(0)) { $0 + $1.bodyBytes }
+        let profileBytes = try fetchProfiles(vaultID: vault.vaultID).reduce(Int64(0)) { $0 + $1.bodyBytes }
+        let attachmentBytes = try fetchContents(vaultID: vault.vaultID).reduce(Int64(0)) {
+            $0 + Int64($1.cipher.count)
+        }
+        return Int64(vault.envelopeEnc.count) + itemBytes + profileBytes + attachmentBytes
+    }
+
     /// Deletes one local vault and all of its business rows and attachment cache.
     ///
     /// This only removes the local SwiftData copy. The legacy file store and any
@@ -267,9 +459,52 @@ public final class SwiftDataVaultStore {
         guard existing == nil else { return false }
         let (database, key) = try legacyStore.loadUnlocked(name: name, password: password)
         let envelope = try Data(contentsOf: legacyStore.keyURL(for: name))
-        try replace(database, name: name, envelope: envelope, vaultKey: key, passwordVersion: 1)
+        let syncState = try legacyStore.loadSyncState(for: name)
+        let attachmentLedger = try legacyStore.loadAttachmentDownloadLedger(for: name)
+        let backupHistory = try legacyStore.loadBackupHistoryData(for: name)
+        if let backupHistory { _ = try BackupPackage.openRestoredHistory(backupHistory, vaultKey: key) }
+        try replace(
+            database,
+            name: name,
+            envelope: envelope,
+            vaultKey: key,
+            passwordVersion: 1,
+            syncState: syncState,
+            attachmentDownloadLedger: attachmentLedger,
+            backupHistory: backupHistory
+        )
         Log.info("db", "imported legacy vault \"\(name)\" into SwiftData")
         return true
+    }
+
+    /// Migrates missing sidecar state from a previously dual-written vault after authentication.
+    public func migrateLegacyMetadataIfNeeded(
+        name: String,
+        password: String,
+        legacyStore: DatabaseStore
+    ) throws {
+        guard let vault = try fetchVault(name: name), legacyStore.exists(name),
+              vault.syncStateData == nil || vault.attachmentDownloadLedgerData == nil else { return }
+        let currentKey = try DatabaseCipher.unwrapVaultKey(vault.envelopeEnc, password: password)
+        let (_, legacyKey) = try legacyStore.loadUnlocked(name: name, password: password)
+        guard currentKey == legacyKey else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
+        }
+        let state = vault.syncStateData == nil ? try legacyStore.loadSyncState(for: name) : nil
+        let ledger = vault.attachmentDownloadLedgerData == nil
+            ? try legacyStore.loadAttachmentDownloadLedger(for: name) : nil
+        let history = vault.backupHistoryData == nil ? try legacyStore.loadBackupHistoryData(for: name) : nil
+        if let history { _ = try BackupPackage.openRestoredHistory(history, vaultKey: currentKey) }
+        if let state { vault.syncStateData = try JSONEncoder().encode(state) }
+        if let ledger { vault.attachmentDownloadLedgerData = try JSONEncoder().encode(ledger) }
+        if let history { vault.backupHistoryData = history }
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+        Log.info("db", "migrated legacy vault metadata for \"\(name)\"")
     }
 
     /// Loads and decrypts the local row tables using the supplied master password.
@@ -368,7 +603,10 @@ public final class SwiftDataVaultStore {
         vaultKey: SymmetricKey,
         passwordVersion: Int64? = nil,
         revisions: [UUID: UInt64] = [:],
-        previousVaultKey: SymmetricKey? = nil
+        previousVaultKey: SymmetricKey? = nil,
+        syncState: RowSyncState? = nil,
+        attachmentDownloadLedger: AttachmentDownloadLedger? = nil,
+        backupHistory: Data? = nil
     ) throws {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let vaultID = (try fetchVault(name: name))?.vaultID ?? UUID().uuidString.lowercased()
@@ -387,6 +625,9 @@ public final class SwiftDataVaultStore {
             passwordVersion: passwordVersion,
             revisions: revisions,
             previousVaultKey: previousVaultKey,
+            syncState: syncState,
+            attachmentDownloadLedger: attachmentDownloadLedger,
+            backupHistory: backupHistory,
             now: now
         )
     }
@@ -399,7 +640,10 @@ public final class SwiftDataVaultStore {
         vaultKey: SymmetricKey,
         passwordVersion: Int64? = nil,
         revisions: [UUID: UInt64] = [:],
-        previousVaultKey: SymmetricKey? = nil
+        previousVaultKey: SymmetricKey? = nil,
+        syncState: RowSyncState? = nil,
+        attachmentDownloadLedger: AttachmentDownloadLedger? = nil,
+        backupHistory: Data? = nil
     ) throws {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let vaultID = (try fetchVault(name: name))?.vaultID ?? UUID().uuidString.lowercased()
@@ -412,6 +656,9 @@ public final class SwiftDataVaultStore {
             passwordVersion: passwordVersion,
             revisions: revisions,
             previousVaultKey: previousVaultKey,
+            syncState: syncState,
+            attachmentDownloadLedger: attachmentDownloadLedger,
+            backupHistory: backupHistory,
             now: now
         )
     }
@@ -425,9 +672,21 @@ public final class SwiftDataVaultStore {
         passwordVersion: Int64?,
         revisions: [UUID: UInt64],
         previousVaultKey: SymmetricKey?,
+        syncState: RowSyncState?,
+        attachmentDownloadLedger: AttachmentDownloadLedger?,
+        backupHistory: Data?,
         now: Int64
     ) throws {
+        var committed = false
+        defer {
+            if !committed { context.rollback() }
+        }
+        let encodedSyncState = try syncState.map { try JSONEncoder().encode($0) }
+        let encodedAttachmentDownloadLedger = try attachmentDownloadLedger.map {
+            try JSONEncoder().encode($0)
+        }
         let rowKey = RowSyncKey(raw: vaultKey.withUnsafeBytes { Data($0) })
+        try syncState?.validateQuarantinedItems(key: rowKey)
         let existingRows = try fetchItems(vaultID: vaultID)
         let rowsByKey = Dictionary(uniqueKeysWithValues: existingRows.map { ($0.rowKey, $0) })
         let existingProfiles = try fetchProfiles(vaultID: vaultID)
@@ -436,7 +695,8 @@ public final class SwiftDataVaultStore {
         let attachmentsByKey = Dictionary(uniqueKeysWithValues: existingAttachments.map { ($0.attachmentKey, $0) })
         let existingContents = try fetchContents(vaultID: vaultID)
         let contentsByKey = Dictionary(uniqueKeysWithValues: existingContents.map { ($0.contentKey, $0) })
-        let vault = try fetchVault(name: name) ?? LocalVaultRecord(
+        let existingVault = try fetchVault(name: name)
+        let vault = existingVault ?? LocalVaultRecord(
             vaultID: vaultID,
             name: name,
             passwordVersion: passwordVersion ?? 1,
@@ -452,6 +712,20 @@ public final class SwiftDataVaultStore {
         vault.envelopeEnc = envelope
         if envelopeChanged { vault.passwordChangedMS = now }
         vault.updatedMS = now
+        if let encodedSyncState { vault.syncStateData = encodedSyncState }
+        if let encodedAttachmentDownloadLedger {
+            vault.attachmentDownloadLedgerData = encodedAttachmentDownloadLedger
+        }
+        if let backupHistory {
+            vault.backupHistoryData = backupHistory
+        } else if let previousVaultKey, previousVaultKey != vaultKey,
+                  let existingHistory = existingVault?.backupHistoryData {
+            vault.backupHistoryData = try BackupPackage.rekeyRestoredHistory(
+                existingHistory,
+                from: previousVaultKey,
+                to: vaultKey
+            )
+        }
         if vault.modelContext == nil { context.insert(vault) }
         if let previousVaultKey, previousVaultKey != vaultKey {
             let oldKey = RowSyncKey(raw: previousVaultKey.withUnsafeBytes { Data($0) })
@@ -540,6 +814,7 @@ public final class SwiftDataVaultStore {
             if attachment.unreferencedMS == nil { attachment.unreferencedMS = now }
         }
         try context.save()
+        committed = true
     }
 
     private func persistAttachments(

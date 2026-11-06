@@ -44,7 +44,7 @@ flowchart LR
     API --> SMTP
 ~~~
 
-原生端以 .upw 加密文件作为离线数据源。浏览器扩展保留加密条目快照。云端不解密密码库内容：MariaDB 存储行级 AEAD 密文和必要同步元数据；R2 存加密对象。网站目录是公开的全局元数据，不属于用户密码库。完整表结构、字段和 SQL 见 [DATABASE.md](DATABASE.md)。
+原生端以 .upw 加密文件作为离线数据源。浏览器扩展保留加密条目快照。云端不解密密码库内容：MariaDB 存储行级 AEAD 密文和必要同步元数据；R2 存加密对象。网站目录是公开的全局元数据，不属于用户密码库。完整表结构、字段和 SQL 见 [DATABASE.md](DATABASE.md)，各端交互时序见 [SEQUENCES.md](SEQUENCES.md)。
 
 ## 密钥与隐私
 

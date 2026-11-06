@@ -419,6 +419,7 @@ public enum BackupPackage {
         database: PasswordDatabase,
         vaultKey: SymmetricKey,
         syncState: RowSyncState,
+        envelope suppliedEnvelope: Data? = nil,
         cloud: CloudSource? = nil,
         cloudRequired: Bool = false,
         now: Date = Date()
@@ -433,7 +434,7 @@ public enum BackupPackage {
             try fileManager.createDirectory(at: conflictDirectory, withIntermediateDirectories: true)
 
             let body = try DatabaseCipher.encryptBody(database.xmlData(), vaultKey: vaultKey)
-            guard let envelope = store.envelopeData(for: name),
+            guard let envelope = suppliedEnvelope ?? store.envelopeData(for: name),
                   DatabaseCipher.envelopeChangedAt(envelope) != nil else {
                 throw DatabaseStore.StoreError(L10n.t("envelope_missing_error"))
             }

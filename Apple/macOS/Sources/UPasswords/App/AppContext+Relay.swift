@@ -23,7 +23,7 @@ extension AppContext {
     /// 新装引导是否需要先走账户登录:无本地库 + 设备从未登录。
     /// 邮箱验证为必经步骤(注册/验证在打开软件时最先完成),不设跳过出口。
     var relayOnboardingNeeded: Bool {
-        phase == .setup && store.list().isEmpty && relay.lastAccountEmail == nil
+        phase == .setup && dbsInfo().isEmpty && relay.lastAccountEmail == nil
     }
 
     // MARK: - 登录与启用
@@ -93,7 +93,8 @@ extension AppContext {
         guard phase == .unlocked else {
             throw SyncError.notConfigured
         }
-        guard let envelope = store.envelopeData(for: databaseName) else {
+        guard let nativeStore,
+              let envelope = try? nativeStore.envelopeData(vaultName: databaseName) else {
             throw DatabaseCipher.CipherError(message: L10n.t("envelope_missing_error"))
         }
         // 其他设备可能已登记过同名库(先绑定的一侧):认领现有登记而非撞 409
@@ -336,7 +337,12 @@ extension AppContext {
         guard let binding = relay.binding(database: databaseName),
               let token = relay.token(database: databaseName) else { return false }
         do {
-            _ = try store.load(name: databaseName, password: masterPassword)
+            let nativeStore = try managedStoreForVault(name: databaseName, password: masterPassword)
+            _ = try nativeStore.loadUnlocked(
+                name: databaseName,
+                password: masterPassword,
+                hydrateAttachments: false
+            )
         } catch {
             Log.warn("sync", "relay transfer rejected: wrong master password")
             AppToast.shared.show(L10n.t("wrong_password_error"))

@@ -3,9 +3,7 @@ import Foundation
 import UPasswordsCore
 import UPasswordsPersistence
 
-/// 把当前库的加密容器字节推进 App Group,供 Safari 扩展原生桥只读解密。
-/// 推送的始终是密文(.upw 容器),隐私红线不破;未配置 App Group
-/// entitlement 的本地构建静默跳过(扩展回退直读活库文件,见 handler)。
+/// 把 SwiftData 当前库加密后推送到 App Group，供 Safari 和凭据扩展读取。
 enum SafariSnapshotBridge {
     private static let appGroup = "2CV6VKVD26.com.upasswords.shared"
     private static let credentialProviderDirectory = "CredentialProvider"
@@ -15,25 +13,21 @@ enum SafariSnapshotBridge {
         case groupUnavailable
     }
 
-    /// 推送当前库快照 + current 活跃标记。失败只记日志,不打扰主流程。
+    /// 推送当前库密文与信封快照。失败只记日志，不打扰主流程。
     /// - Parameters:
     ///   - name: 当前库名
-    ///   - store: 库文件存储(源文件本身即加密容器)
-    static func push(databaseName name: String, store: DatabaseStore) {
+    ///   - encryptedBody: 当前数据库加密容器。
+    ///   - envelope: 用主密码包裹的库密钥。
+    static func push(databaseName name: String, encryptedBody: Data, envelope: Data) {
         guard let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) else {
             Log.warn("chrome", "shared snapshot skipped: app group unavailable")
             return
         }
         let dir = group.appendingPathComponent(safariDirectory, isDirectory: true)
-        let source = store.url(for: name)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try Data(contentsOf: source)
-            try data.write(to: dir.appendingPathComponent("\(name).upw"), options: .atomic)
-            // v2 库须连同信封一起推,扩展侧才能用主密码解出库密钥
-            if let envelope = store.envelopeData(for: name) {
-                try envelope.write(to: dir.appendingPathComponent("\(name).upwkey"), options: .atomic)
-            }
+            try encryptedBody.write(to: dir.appendingPathComponent("\(name).upw"), options: .atomic)
+            try envelope.write(to: dir.appendingPathComponent("\(name).upwkey"), options: .atomic)
             try Data(name.utf8).write(to: dir.appendingPathComponent("current"), options: .atomic)
 
             let credentialProviderRoot = group.appendingPathComponent(
@@ -42,17 +36,15 @@ enum SafariSnapshotBridge {
                 "Databases", isDirectory: true)
             try FileManager.default.createDirectory(
                 at: credentialProviderDatabases, withIntermediateDirectories: true)
-            try data.write(
+            try encryptedBody.write(
                 to: credentialProviderDatabases.appendingPathComponent("\(name).upw"),
                 options: .atomic)
-            if let envelope = store.envelopeData(for: name) {
-                try envelope.write(
-                    to: credentialProviderDatabases.appendingPathComponent("\(name).upwkey"),
-                    options: .atomic)
-            }
+            try envelope.write(
+                to: credentialProviderDatabases.appendingPathComponent("\(name).upwkey"),
+                options: .atomic)
             try Data(name.utf8).write(
                 to: credentialProviderRoot.appendingPathComponent("current"), options: .atomic)
-            Log.debug("chrome", "safari snapshot pushed: \(name) (\(data.count)B)")
+            Log.debug("chrome", "safari snapshot pushed: \(name) (\(encryptedBody.count)B)")
         } catch {
             Log.warn("chrome", "safari snapshot push failed for \(name): \(error)")
         }

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 
 import UPasswordsCore
 import UPasswordsPersistence
@@ -6,36 +7,111 @@ import UPasswordsPersistence
 /// 切换密码库:先验证目标库解锁密码,成功才切换。
 extension AppContext {
 
-    /// 在同一会话操作中重命名旧版文件和原生数据存储。
+    /// Creates a local vault directly in the SwiftData store.
+    func createManagedDatabase(name: String, password: String) throws {
+        guard let nativeStore else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
+        }
+        try ensureDatabaseNameAvailable(name)
+        try nativeStore.createVault(name: name, password: password)
+        if dbsInfo().count == 1 { store.mainDatabaseName = name }
+    }
+
+    /// Checks SwiftData and unmigrated legacy files so old stores remain discoverable.
+    func databaseExists(_ name: String) -> Bool {
+        if let nativeStore, (try? nativeStore.containsVault(name: name)) == true { return true }
+        return store.exists(name)
+    }
+
+    /// Fails closed if either catalog cannot prove the destination name is unused.
+    func ensureDatabaseNameAvailable(_ name: String) throws {
+        guard let nativeStore else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
+        }
+        guard try !nativeStore.containsVault(name: name), !store.exists(name) else {
+            throw DatabaseStore.StoreError(L10n.t("database_already_exists_error"))
+        }
+    }
+
+    /// Migrates a legacy file store on first access and returns the SwiftData store.
+    func managedStoreForVault(name: String, password: String) throws -> SwiftDataVaultStore {
+        guard let nativeStore else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
+        }
+        if try nativeStore.containsVault(name: name) {
+            try nativeStore.migrateLegacyMetadataIfNeeded(name: name, password: password, legacyStore: store)
+        } else {
+            _ = try nativeStore.importLegacyIfNeeded(name: name, password: password, legacyStore: store)
+        }
+        return nativeStore
+    }
+
+    /// Deletes a vault from SwiftData and removes any remaining legacy sidecars.
+    func deleteManagedDatabase(name: String) throws {
+        guard let nativeStore else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
+        }
+        let wasMain = store.mainDatabaseName == name
+        try nativeStore.deleteVault(name: name)
+        try store.delete(name: name)
+        if wasMain {
+            store.mainDatabaseName = dbsInfo().first?.name ?? "Main"
+        }
+    }
+
+    /// Refreshes the encrypted snapshot consumed by the Safari and credential-provider extensions.
+    func pushExtensionSnapshot(database: PasswordDatabase, name: String, vaultKey: SymmetricKey) {
+        guard let nativeStore else { return }
+        do {
+            let envelope = try nativeStore.envelopeData(vaultName: name)
+            let body = try DatabaseCipher.encryptBody(database.xmlData(), vaultKey: vaultKey)
+            SafariSnapshotBridge.push(databaseName: name, encryptedBody: body, envelope: envelope)
+        } catch {
+            Log.error("autofill", "extension snapshot generation failed for \(name): \(error)")
+        }
+    }
+
+    /// Renames the SwiftData vault and associated backup metadata.
     ///
     /// - Parameters:
     ///   - oldName: 当前本地密码库名。
     ///   - newName: 新的本地密码库名。
-    /// - Throws: 名称校验、文件操作或原生数据存储出错时抛出错误。
+    /// - Throws: 名称校验或 local persistence errors.
     func renameDatabase(from oldName: String, to newName: String) throws {
         guard oldName != newName else { return }
-        var nativeRenamed = false
-        if let nativeStore {
-            guard try nativeStore.containsVault(name: newName) == false else {
-                throw DatabaseStore.StoreError(L10n.t("database_already_exists_error"))
-            }
-            if try nativeStore.containsVault(name: oldName) {
-                try nativeStore.renameVault(from: oldName, to: newName)
-                nativeRenamed = true
-            }
+        guard let nativeStore else {
+            throw DatabaseStore.StoreError(L10n.t("sync_error"))
         }
-        do {
-            try store.rename(oldName, to: newName)
-        } catch {
-            if nativeRenamed {
+        try ensureDatabaseNameAvailable(newName)
+        if try nativeStore.containsVault(name: oldName) {
+            try nativeStore.renameVault(from: oldName, to: newName)
+            do {
+                try store.rename(oldName, to: newName, allowMissingDatabase: true)
+            } catch {
                 do {
-                    try nativeStore?.renameVault(from: newName, to: oldName)
+                    try nativeStore.renameVault(from: newName, to: oldName)
                 } catch {
-                    Log.error("db", "native rename rollback failed: \(error)")
+                    Log.error("db", "SwiftData rename rollback failed: \(error)")
                 }
+                throw error
             }
-            throw error
+        } else {
+            try store.rename(oldName, to: newName)
         }
+    }
+
+    /// Loads a reviewed source snapshot after migrating any legacy file store.
+    func loadCardImportSource(
+        name: String,
+        password: String,
+        matching fingerprint: Data? = nil
+    ) throws -> CrossDatabaseCardImporter.SourceSnapshot {
+        let nativeStore = try managedStoreForVault(name: name, password: password)
+        return try nativeStore.loadCardImportSource(
+            name: name,
+            password: password,
+            matching: fingerprint
+        )
     }
 
     /// 弹窗要求输入目标库的解锁密码,验证通过后直接切换并解锁;

@@ -353,10 +353,29 @@ extension AppContext {
 
     // MARK: - Info
 
-    /// 返回按库名排序的本地库文件描述。
+    /// Returns SwiftData vaults plus any unmigrated legacy files, sorted by name.
     ///
     /// - Returns: 不包含已解密内容的库清单。
-    func dbsInfo() -> [DatabaseFile] { store.list() }
+    func dbsInfo() -> [DatabaseSummary] {
+        var summaries: [String: DatabaseSummary] = [:]
+        if let nativeStore, let vaults = try? nativeStore.listVaults() {
+            for vault in vaults {
+                summaries[vault.name] = DatabaseSummary(
+                    name: vault.name,
+                    created: Date(timeIntervalSince1970: Double(vault.createdMS) / 1_000),
+                    isMain: vault.name == store.mainDatabaseName
+                )
+            }
+        }
+        for legacy in store.list() where summaries[legacy.name] == nil {
+            summaries[legacy.name] = DatabaseSummary(
+                name: legacy.name,
+                created: legacy.created,
+                isMain: legacy.isMain
+            )
+        }
+        return summaries.values.sorted { $0.name < $1.name }
+    }
 
     var allHistoryEntries: [(card: Card, field: Field, entry: HistoryEntry)] {
         var out: [(card: Card, field: Field, entry: HistoryEntry)] = []

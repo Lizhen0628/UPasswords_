@@ -74,6 +74,14 @@ final class AppContext: ObservableObject {
         let favoritesFirst: Bool
     }
 
+    struct DatabaseSummary: Identifiable {
+        let name: String
+        let created: Date
+        let isMain: Bool
+
+        var id: String { name }
+    }
+
     static let credentialProviderKeychainAccessGroup = PasswordStore.credentialProviderAccessGroup
 
     enum Phase: Equatable {
@@ -267,14 +275,14 @@ final class AppContext: ObservableObject {
     // MARK: - Bootstrap
 
     private func bootstrapPhase() {
-        Log.info("lifecycle", "bootstrap: mainDatabaseName=\"\(store.mainDatabaseName)\" databases=\(store.list().map(\.name))")
+        Log.info("lifecycle", "bootstrap: mainDatabaseName=\"\(store.mainDatabaseName)\" databases=\(dbsInfo().map(\.name))")
         #if DEBUG
         // 复现「锁定→解锁」过渡:UP_SCREENSHOT_BOOT=2 时建库(如有)→启动进锁定态,
         // 3 秒后自动解锁(自动化测试用,release 不编译)。
         if ProcessInfo.processInfo.environment["UP_SCREENSHOT_BOOT"] == "2" {
             Log.info("lifecycle", "UP_SCREENSHOT_BOOT=2 (debug automation)")
-            if !store.exists("TestDB") {
-                _ = try? store.create(name: "TestDB", password: "screenshot")
+            if !databaseExists("TestDB") {
+                try? createManagedDatabase(name: "TestDB", password: "screenshot")
                 store.mainDatabaseName = "TestDB"
             }
             databaseName = "TestDB"
@@ -376,7 +384,7 @@ final class AppContext: ObservableObject {
             settings.autoLockSeconds = 0
             settings.fastUnlock = false
             let name = "UPasswords"
-            if !store.exists(name) {
+            if !databaseExists(name) {
                 do {
                     // 走与向导「继续」相同的 createDatabase 路径,复现 setupPlan 弹窗
                     try createDatabase(name: name, password: "screenshot", touchID: false)
@@ -415,14 +423,14 @@ final class AppContext: ObservableObject {
             }
         }
         #endif
-        let dbs = store.list()
+        let dbs = dbsInfo()
         if dbs.isEmpty {
             Log.info("lifecycle", "bootstrap → phase=setup (no databases)")
             phase = .setup
         } else {
             Log.info("lifecycle", "bootstrap → phase=locked (databases present)")
             phase = .locked
-            databaseName = store.exists(store.mainDatabaseName)
+            databaseName = databaseExists(store.mainDatabaseName)
                 ? store.mainDatabaseName
                 : (dbs.first?.name ?? "Main")
         }
@@ -440,7 +448,7 @@ final class AppContext: ObservableObject {
     func createDatabase(name: String, password: String, touchID: Bool) throws {
         Log.info("lifecycle", "createDatabase \"\(name)\" touchID=\(touchID)")
         do {
-            try store.create(name: name, password: password)
+            try createManagedDatabase(name: name, password: password)
         } catch {
             Log.error("lifecycle", "createDatabase \"\(name)\" failed: \(error)")
             throw error
@@ -466,27 +474,18 @@ final class AppContext: ObservableObject {
     func unlock(name: String, password: String) throws {
         Log.info("lifecycle", "unlock \"\(name)\"")
         let loaded: (PasswordDatabase, SymmetricKey, RowSyncState,
-                     [AttachmentDownloadLedger.Version: Int])
+                     [AttachmentDownloadLedger.Version: Int], AttachmentDownloadLedger)
         do {
-            let dbAndKey: (PasswordDatabase, SymmetricKey)
-            let cacheBytes: [AttachmentDownloadLedger.Version: Int]
-            if let nativeStore, try nativeStore.containsVault(name: name) {
-                dbAndKey = try nativeStore.loadUnlocked(
-                    name: name, password: password, hydrateAttachments: false)
-                cacheBytes = try nativeStore.cachedAttachmentBytes(vaultName: name)
-            } else {
-                dbAndKey = try store.loadUnlocked(name: name, password: password)
-                if let nativeStore {
-                    _ = try nativeStore.importLegacyIfNeeded(
-                        name: name, password: password, legacyStore: store)
-                    cacheBytes = try nativeStore.cachedAttachmentBytes(vaultName: name)
-                } else {
-                    cacheBytes = [:]
-                }
-            }
+            let nativeStore = try managedStoreForVault(name: name, password: password)
+            let dbAndKey = try nativeStore.loadUnlocked(
+                name: name, password: password, hydrateAttachments: false)
+            let cacheBytes = try nativeStore.cachedAttachmentBytes(vaultName: name)
             let (db, vek) = dbAndKey
-            let state = try store.loadSyncState(for: name)
-            loaded = (db, vek, state, cacheBytes)
+            let storedState = try nativeStore.loadSyncState(vaultName: name)
+            let state = storedState ?? RowSyncState()
+            if storedState == nil { try nativeStore.saveSyncState(state, vaultName: name) }
+            let attachmentLedger = try nativeStore.loadAttachmentDownloadLedger(vaultName: name)
+            loaded = (db, vek, state, cacheBytes, attachmentLedger)
         } catch {
             Log.warn("lifecycle", "unlock \"\(name)\" failed: \(error)")
             throw error
@@ -496,6 +495,7 @@ final class AppContext: ObservableObject {
         databaseName = name
         rowSync = loaded.2
         attachmentCacheBytes = loaded.3
+        attachmentDownloadLedger = loaded.4
         Log.info("sync", "restored row sync state for \"\(name)\" (cursor=\(rowSync.cursor), pending=\(rowSync.dirtyUpserts.count + rowSync.dirtyDeletes.count))")
         self.password = password
         phase = .unlocked
@@ -505,7 +505,7 @@ final class AppContext: ObservableObject {
         selection = .special(.allCards)
         selectedCardId = database.activeCards.first?.id
         Log.info("lifecycle", "unlocked \"\(name)\": \(database.cards.count) cards, \(database.labels.count) labels")
-        SafariSnapshotBridge.push(databaseName: name, store: store)
+        pushExtensionSnapshot(database: database, name: name, vaultKey: loaded.1)
         CredentialProviderIdentityStore.replace(with: database.activeCards)
         scheduleIconBackfill()
         scheduleAutoBackupIfNeeded()
@@ -597,14 +597,14 @@ final class AppContext: ObservableObject {
                     Log.warn("lifecycle", "remote unlock fallback: remote envelope rejected password")
                     return Self.isPasswordRejection(error) ? .wrongPassword : .unavailable
                 }
-                guard !store.exists(name) else {
+                guard !databaseExists(name) else {
                     Log.info("sync", "remote password accepted; local copy requires password verification")
                     return .previousPasswordRequired
                 }
                 // 远端是行级密文,走全量重建收敛本地(他机改密后本体随新 VEK 重加密)
                 var state: RowSyncState
                 do {
-                    state = try store.loadSyncState(for: name)
+                    state = try nativeStore?.loadSyncState(vaultName: name) ?? RowSyncState()
                 } catch {
                     Log.error("sync", "remote unlock fallback state load failed: \(error)")
                     return .unavailable
@@ -763,15 +763,25 @@ final class AppContext: ObservableObject {
     /// 残留的密文+信封可被离线爆破,残留令牌可枚举账户。
     func eraseAllData() {
         Log.warn("lifecycle", "ERASE ALL DATA (self-destruct or manual)")
+        let databaseNames: Set<String>
         do {
-            try nativeStore?.deleteAllVaults()
+            guard let nativeStore else {
+                throw DatabaseStore.StoreError(L10n.t("sync_error"))
+            }
+            databaseNames = Set(try nativeStore.listVaults().map(\.name) + store.list().map(\.name))
+            try nativeStore.deleteAllVaults()
         } catch {
             Log.error("db", "erase all SwiftData vaults failed; legacy data preserved: \(error)")
             AppToast.shared.show(error.localizedDescription)
             return
         }
-        for db in store.list() {
-            try? store.delete(name: db.name)
+        for name in databaseNames {
+            do {
+                try store.delete(name: name)
+            } catch {
+                Log.error("db", "erase local metadata failed for \(name): \(error)")
+                AppToast.shared.show(error.localizedDescription)
+            }
         }
         do {
             try SafariSnapshotBridge.removeSnapshots()
@@ -795,30 +805,20 @@ final class AppContext: ObservableObject {
                             state: RowSyncState, envelope: Data? = nil,
                             rekeyBackupHistoryFrom: SymmetricKey? = nil) throws {
         do {
-            if let nativeStore {
-                if let envelope {
-                    try nativeStore.replace(
-                        snapshot,
-                        name: name,
-                        envelope: envelope,
-                        vaultKey: vaultKey,
-                        revisions: state.revisions,
-                        previousVaultKey: rekeyBackupHistoryFrom
-                    )
-                } else {
-                    try nativeStore.replace(
-                        snapshot,
-                        name: name,
-                        vaultKey: vaultKey,
-                        revisions: state.revisions,
-                        previousVaultKey: rekeyBackupHistoryFrom
-                    )
-                }
+            guard let nativeStore else {
+                throw DatabaseStore.StoreError(L10n.t("sync_error"))
             }
+            try nativeStore.replace(
+                snapshot,
+                name: name,
+                envelope: envelope ?? (try nativeStore.envelopeData(vaultName: name)),
+                vaultKey: vaultKey,
+                revisions: state.revisions,
+                previousVaultKey: rekeyBackupHistoryFrom,
+                syncState: state,
+                attachmentDownloadLedger: name == databaseName ? attachmentDownloadLedger : nil
+            )
             rememberAttachmentCache(in: snapshot)
-            try store.commitSyncSnapshot(snapshot, name: name, vaultKey: vaultKey,
-                                         state: state, envelope: envelope,
-                                         rekeyBackupHistoryFrom: rekeyBackupHistoryFrom)
         } catch {
             saveDebounce?.cancel()
             syncSessionID = UUID()
@@ -832,7 +832,7 @@ final class AppContext: ObservableObject {
         }
     }
 
-    /// 使用当前库密钥保存整库并推送 Safari 加密快照，失败时记录日志并提示。
+    /// 使用当前库密钥保存 SwiftData 库并更新扩展密文快照。
     ///
     /// 锁定状态或密钥缺失时不写盘；调用方不能将返回视为可捕获的成功凭据。
     @discardableResult
@@ -844,15 +844,19 @@ final class AppContext: ObservableObject {
                 Log.error("db", "save \"\(databaseName)\" aborted: no vault key in session")
                 return false
             }
-            try nativeStore?.replace(
+            guard let nativeStore else {
+                throw DatabaseStore.StoreError(L10n.t("sync_error"))
+            }
+            try nativeStore.replace(
                 database,
                 name: databaseName,
                 vaultKey: vaultKey,
-                revisions: rowSync.revisions
+                revisions: rowSync.revisions,
+                syncState: rowSync,
+                attachmentDownloadLedger: attachmentDownloadLedger
             )
             rememberAttachmentCache(in: database)
-            try store.save(database, name: databaseName, vaultKey: vaultKey)
-            SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+            pushExtensionSnapshot(database: database, name: databaseName, vaultKey: vaultKey)
             CredentialProviderIdentityStore.replace(with: database.activeCards)
             return true
         } catch {

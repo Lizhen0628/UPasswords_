@@ -91,7 +91,14 @@ extension AppContext {
         // 轮换的崩溃窗口防线:本体(新钥)与信封(新钥)两次写之间崩溃会让
         // 新旧密码都解不开库;先落一份改前备份,备份失败即中止改密
         do {
-            try store.backup(name: databaseName)
+            guard let nativeStore else { throw DatabaseStore.StoreError(L10n.t("sync_error")) }
+            let envelope = try nativeStore.envelopeData(vaultName: databaseName)
+            try store.backupSnapshot(
+                try databaseForBackup(),
+                name: databaseName,
+                vaultKey: oldVaultKey,
+                envelope: envelope
+            )
         } catch {
             Log.error("backup", "pre-rotation backup of \"\(databaseName)\" failed — aborting password change: \(error)")
             throw error
@@ -112,7 +119,7 @@ extension AppContext {
         self.vaultKey = effectiveKey
         Log.info("db", "changePassword \"\(databaseName)\" ok (vault key rotated, body re-encrypted)")
         // 快照连信封+本体一起重推(两者都已换代)
-        SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+        pushExtensionSnapshot(database: database, name: databaseName, vaultKey: effectiveKey)
         // 云端接力(rekey):全部条目新 VEK 密文分块换入;失败不回滚本地
         // (他端旧密文推送会撞 revision+1 的 409,走强制锁定收敛)。
         if relayBound {
@@ -171,7 +178,7 @@ extension AppContext {
 
     func backupNow() {
         guard phase == .unlocked else { return }
-        save()
+        guard save() else { return }
         startBackupCapture(auto: false)
     }
 
@@ -188,15 +195,27 @@ extension AppContext {
             return L10n.t("backup_restore_bound_name_error")
         }
         do {
-            _ = try store.restoreBackupAsCopy(
+            guard let nativeStore else {
+                throw DatabaseStore.StoreError(L10n.t("sync_error"))
+            }
+            try ensureDatabaseNameAvailable(name)
+            let restored = try store.restoreBackupSnapshot(
                 backup: backup,
-                name: name,
                 sourcePassword: sourcePassword,
                 newPassword: newPassword,
                 expectedPackageVerificationToken: expectedPackageVerificationToken,
                 allowIncompletePackage: allowIncompletePackage)
-            _ = try nativeStore?.importLegacyIfNeeded(
-                name: name, password: newPassword, legacyStore: store)
+
+            try nativeStore.replace(
+                restored.database,
+                name: name,
+                envelope: restored.envelope,
+                vaultKey: restored.vaultKey,
+                syncState: restored.syncState,
+                attachmentDownloadLedger: restored.attachmentDownloadLedger,
+                backupHistory: restored.backupHistory
+            )
+            PasswordStore.savePassword(newPassword, databaseName: name)
             Log.info("backup", "restored \"\(backup.lastPathComponent)\" as copy \"\(name)\"")
             AppToast.shared.show(String(format: L10n.t("backup_copy_created_fmt"), name))
             return nil
@@ -233,17 +252,29 @@ extension AppContext {
               let vaultKey else { return }
         let name = databaseName
         let sessionID = syncSessionID
-        let snapshot = database
+        let snapshot: PasswordDatabase
+        do {
+            snapshot = try databaseForBackup()
+        } catch {
+            Log.error("backup", "cursor recovery backup preparation failed: \(error)")
+            AppToast.shared.show(error.localizedDescription)
+            return
+        }
         let previousState = rowSync
         syncState = .syncing
         Log.info("sync", "cursor recovery started for \"\(name)\" pending=\(previousState.dirtyUpserts.count + previousState.dirtyDeletes.count)")
         do {
+            guard let nativeStore else {
+                throw DatabaseStore.StoreError(L10n.t("sync_error"))
+            }
+            let envelope = try nativeStore.envelopeData(vaultName: name)
             let protected = try await BackupPackage.capture(
                 store: store,
                 name: name,
                 database: snapshot,
                 vaultKey: vaultKey,
                 syncState: previousState,
+                envelope: envelope,
                 cloud: BackupPackage.CloudSource(
                     client: relayClient, token: token, vaultID: binding.vaultId),
                 cloudRequired: true)
@@ -288,10 +319,30 @@ extension AppContext {
         cancelBackupCapture()
         let name = databaseName
         let sessionID = syncSessionID
-        let snapshot = database
+        let snapshot: PasswordDatabase
+        do {
+            snapshot = try databaseForBackup()
+        } catch {
+            Log.error("backup", "package capture preparation failed: \(error)")
+            if !auto { AppToast.shared.show(error.localizedDescription) }
+            return
+        }
         let state = rowSync
         let binding = relay.binding(database: name)
         let token = relay.token(database: name)
+        guard let nativeStore else {
+            Log.error("backup", "package capture failed for \"\(name)\": SwiftData store unavailable")
+            AppToast.shared.show(L10n.t("sync_error"))
+            return
+        }
+        let envelope: Data
+        do {
+            envelope = try nativeStore.envelopeData(vaultName: name)
+        } catch {
+            Log.error("backup", "package capture could not load envelope for \"\(name)\": \(error)")
+            AppToast.shared.show(error.localizedDescription)
+            return
+        }
         let cloud = binding.flatMap { binding in
             token.map { BackupPackage.CloudSource(client: relayClient, token: $0, vaultID: binding.vaultId) }
         }
@@ -305,6 +356,7 @@ extension AppContext {
                     database: snapshot,
                     vaultKey: vaultKey,
                     syncState: state,
+                    envelope: envelope,
                     cloud: cloud,
                     cloudRequired: binding != nil)
                 guard let self else { return }
@@ -393,13 +445,14 @@ extension AppContext {
                 localDatabase = originalDatabase
                 localVaultKey = originalKey
                 state = rowSync
-            } else if store.exists(name) {
+            } else if databaseExists(name) {
                 guard let previousPassword, !previousPassword.isEmpty else {
                     return .previousPasswordRequired
                 }
                 do {
-                    let (database, key) = try store.loadUnlocked(
-                        name: name, password: previousPassword)
+                    let nativeStore = try managedStoreForVault(name: name, password: previousPassword)
+                    let (database, key) = try nativeStore.loadUnlocked(
+                        name: name, password: previousPassword, hydrateAttachments: false)
                     localDatabase = database
                     localVaultKey = key
                 } catch {
@@ -407,11 +460,11 @@ extension AppContext {
                     Log.warn("sync", "local copy password verification failed")
                     return .wrongPreviousPassword
                 }
-                state = try store.loadSyncState(for: name)
+                state = try nativeStore?.loadSyncState(vaultName: name) ?? RowSyncState()
             } else {
                 localDatabase = nil
                 localVaultKey = nil
-                state = try store.loadSyncState(for: name)
+                state = RowSyncState()
             }
             let rowKey = RowSyncKey(raw: remoteVEK.withUnsafeBytes { Data($0) })
             let rebuilt: PasswordDatabase
@@ -439,7 +492,8 @@ extension AppContext {
                 throw RowSyncSafetyError.localDataNeedsRecovery
             }
             try commitSyncSnapshot(
-                rebuilt, name: name, vaultKey: remoteVEK, state: state, envelope: envelope)
+                rebuilt, name: name, vaultKey: remoteVEK, state: state, envelope: envelope,
+                rekeyBackupHistoryFrom: localVaultKey)
             if startedUnlocked {
                 database = rebuilt
                 rowSync = state
@@ -461,7 +515,7 @@ extension AppContext {
                 selectedCardId = database.activeCards.first?.id
             }
             syncRemoteUnreadable = false
-            SafariSnapshotBridge.push(databaseName: databaseName, store: store)
+            pushExtensionSnapshot(database: database, name: databaseName, vaultKey: remoteVEK)
             Log.info("sync", "adopted new password via envelope (rows rebuilt: \(rebuilt.cards.count) cards)")
             return .success
         } catch let error as RowSyncSafetyError {
@@ -486,14 +540,17 @@ extension AppContext {
     func overwriteUnreadableRemote() async {
         guard let binding = relay.binding(database: databaseName),
               let token = relay.token(database: databaseName),
-              let key = vaultKey,
-              let envelope = store.envelopeData(for: databaseName) else { return }
+              let key = vaultKey else { return }
         let name = databaseName
         let sessionID = syncSessionID
         let snapshot = database
         syncState = .syncing
         Log.info("sync", "overwrite unreadable remote started")
         do {
+            guard let nativeStore else {
+                throw DatabaseStore.StoreError(L10n.t("sync_error"))
+            }
+            let envelope = try nativeStore.envelopeData(vaultName: name)
             var state = rowSync
             try await RowSync.rekey(
                 client: relayClient, token: token, vaultId: binding.vaultId,
@@ -532,10 +589,7 @@ extension AppContext {
         let currentName = databaseName
         let originalKey = vaultKey
         Log.info("lifecycle", "restore from relay \"\(name)\" (vault=\(record.vaultId.prefix(8))…)")
-        guard !store.exists(name) else {
-            Log.warn("lifecycle", "restore from relay \"\(name)\" aborted: local database exists")
-            throw SyncError.localNameConflict
-        }
+        try ensureDatabaseNameAvailable(name)
         let detail = try await relayClient.getVault(token: token, vaultId: record.vaultId)
         try validateSyncSession(name: currentName, key: originalKey, sessionID: sessionID)
         guard let envelope = detail.envelope else {
@@ -548,7 +602,7 @@ extension AppContext {
             client: relayClient, token: token, vaultId: record.vaultId,
             key: RowSyncKey(raw: vek.withUnsafeBytes { Data($0) }), state: &state)
         try validateSyncSession(name: currentName, key: originalKey, sessionID: sessionID)
-        guard !store.exists(name) else { throw SyncError.localNameConflict }
+        try ensureDatabaseNameAvailable(name)
         try commitSyncSnapshot(db, name: name, vaultKey: vek, state: state, envelope: envelope)
         store.mainDatabaseName = name
         try unlock(name: name, password: pw)
@@ -561,7 +615,14 @@ extension AppContext {
     /// 校验解密后落为本地库,直接解锁进入主界面——离线迁移路径。
     func restoreDatabaseFromLocalFiles(body: URL, envelope: URL, name: String, password: String) async throws {
         Log.info("lifecycle", "restore from local files \"\(name)\" (body=\(body.lastPathComponent))")
-        _ = try store.restore(body: body, envelope: envelope, name: name, password: password)
+        try ensureDatabaseNameAvailable(name)
+        guard let nativeStore else { throw DatabaseStore.StoreError(L10n.t("sync_error")) }
+        try nativeStore.restoreVaultFromFiles(
+            bodyURL: body,
+            envelopeURL: envelope,
+            name: name,
+            password: password
+        )
         store.mainDatabaseName = name
         try unlock(name: name, password: password)
         scheduleSilentBreachCheck()
@@ -708,7 +769,7 @@ extension AppContext {
             rowSync = state
             scheduleMissingAttachmentDownloads()
             relay.recordPasswordVersion(record.passwordVersion, database: name)
-            SafariSnapshotBridge.push(databaseName: name, store: store)
+            pushExtensionSnapshot(database: db, name: name, vaultKey: snapshotKey)
             if let selected = selectedCardId, database.card(id: selected) == nil {
                 selectedCardId = database.activeCards.first?.id
             }

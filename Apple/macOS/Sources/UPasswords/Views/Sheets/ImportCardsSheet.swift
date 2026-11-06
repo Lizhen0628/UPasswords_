@@ -143,7 +143,7 @@ struct ImportCardsSheet: View {
     @MainActor private func inspectSource() {
         errorMessage = nil
         do {
-            let snapshot = try ctx.store.loadCardImportSource(name: sourceName, password: sourcePassword)
+            let snapshot = try ctx.loadCardImportSource(name: sourceName, password: sourcePassword)
             assessments = try CrossDatabaseCardImporter.assess(
                 source: snapshot,
                 syncState: ctx.rowSync)

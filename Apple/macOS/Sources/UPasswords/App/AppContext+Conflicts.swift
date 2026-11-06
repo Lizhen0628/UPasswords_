@@ -206,7 +206,7 @@ extension AppContext {
         rowSync = plan.syncState
         selectedCardId = newID
         lastActivity = Date()
-        SafariSnapshotBridge.push(databaseName: name, store: store)
+        pushExtensionSnapshot(database: database, name: name, vaultKey: vaultKey)
         AppToast.shared.show(L10n.t("sync_conflict_copy_saved"))
         Log.info("sync", "macOS conflict candidate copied as new card source=\(conflict.itemUUID.uuidString.prefix(8)) new=\(newID.uuidString.prefix(8))")
         if relayBound {

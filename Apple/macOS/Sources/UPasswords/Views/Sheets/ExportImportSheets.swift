@@ -45,7 +45,15 @@ struct ExportAsSheet: View {
     }
 
     @MainActor private func export() {
-        guard (try? ctx.store.load(name: ctx.databaseName, password: exportPassword)) != nil else {
+        guard let nativeStore = try? ctx.managedStoreForVault(
+            name: ctx.databaseName,
+            password: exportPassword
+        ),
+        (try? nativeStore.loadUnlocked(
+            name: ctx.databaseName,
+            password: exportPassword,
+            hydrateAttachments: false
+        )) != nil else {
             wrongPassword = true
             exportPassword = ""
             Log.warn("app", "export rejected: wrong vault password")

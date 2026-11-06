@@ -1,6 +1,6 @@
 # UPasswords v1 数据库设计
 
-> 本文描述仓库内 `Cloud/` 源码快照的数据存储。产品开发版本为 v1；本地容器格式、云同步协议、API 路径与数据库迁移编号是相互独立的版本标识。生产已于 2026-10-28 运行同步协议 5，数据库迁移 `0001`–`0010` 已应用；生产部署状态以 `service-admin` 的镜像标签和运行记录为准；源码须与受信任 `main` 一致。
+> 本文描述仓库内 `Cloud/` 源码快照的数据存储。产品开发版本为 v1；本地容器格式、云同步协议、API 路径与数据库迁移编号是相互独立的版本标识。生产已于 2026-10-28 运行同步协议 5，生产数据库当前已应用 `0001`–`0010`；本次源码新增 `0011`，待部署流程执行后生效。生产部署状态以 `service-admin` 的镜像标签和运行记录为准；源码须与受信任 `main` 一致。
 
 ## 存储边界
 
@@ -16,7 +16,7 @@ IndexedDB object store 映射相同的业务表字段和语义。本地库仅保
 |---|---|---|---|
 | `vaults` | `LocalVaultRecord` | `vaults` | 保留本地有语义的库身份、信封、密码版本和时间列；用户 ID、配额、日志水位等服务端运营列不复制。 |
 | `vault_items` | `LocalVaultItemRecord` | `vault_items` | 行密文、真实字节数、SHA-256、revision、修改时间与来源快照一致。 |
-| `vault_user_profiles` | `LocalVaultProfileRecord` | `vault_user_profiles` | kind=3 独立分表；旧 kind=3 行初始化事务迁移。 |
+| `vault_items` | `LocalVaultItemRecord` | `vault_items` | kind=1/2/3 统一密文行；个人资料不再使用独立云端物理表。 |
 | `attachments` | 当前引用由附件版本模型推导 | `attachments` | 当前版本元数据；对象路径等服务端存储细节不暴露给客户端。 |
 | `attachment_versions` | `LocalAttachmentRecord` | `attachment_versions` | 版本身份、DEK 包装、摘要、字节数、创建/退役时间对齐；缓存淘汰状态为本地额外列。 |
 | 附件对象字节 | `LocalAttachmentContentRecord` | `attachmentContent` | 云端 R2 对象的已验证密文字节缓存，不属于 MariaDB 表。 |
@@ -28,11 +28,14 @@ IndexedDB object store 映射相同的业务表字段和语义。本地库仅保
 云端生产 API 为 Cloud/api 中的 Go + chi 服务。MariaDB 存账户、会话、库注册表、条目密文、变更日志、附件元数据、改密暂存、审计记录和全局网站目录。附件密文与网站图标字节保存在 R2，不属于 MariaDB 表。
 
 本地仓库的初始化基线为 [0001_init.sql](database/0001_init.sql)，包含 12 张基础表；
-[0002_user_profiles.sql](database/0002_user_profiles.sql) 增加个人资料专用表与合并视图。
+[0002_user_profiles.sql](database/0002_user_profiles.sql) 曾增加个人资料专用表与合并视图，
+[0011_schema_hardening.sql](database/0011_schema_hardening.sql) 已将 kind=3 行合并回
+`vault_items`，并保留同名兼容视图。
 `Cloud/database/` 包含 `0003_conflict_candidates.sql` 至
 `0010_rekey_conflict_candidates.sql`，其中 0003–0007 增加冲突候选、裁决和删除证据，
-0008–0010 增加附件版本及冲突候选 rekey 支持。生产 `upasswords` 数据库已于
-2026-10-27 应用 `0001`–`0010`，包含 22 张基础表和 `vault_sync_items` 视图；当前运行 API
+0008–0010 增加附件版本及冲突候选 rekey 支持，0011 完成条目合表、引用约束、清理索引、结构化
+验证码限流字段和迁移账本。生产 `upasswords` 数据库已于
+2026-10-27 应用 `0001`–`0010`，包含 22 张业务表和 `vault_sync_items` 视图；`0011` 为本次待部署迁移。当前运行 API
 镜像和维护调度器状态见 [数据库操作记录](database/README.md)。建库、业务账号和权限由部署流程
 创建，应用账号不应拥有 DDL 权限。后续 schema 变更以受信任 main 的迁移为规范，已应用迁移不得改写。
 
@@ -40,9 +43,9 @@ IndexedDB object store 映射相同的业务表字段和语义。本地库仅保
 
 - 引擎：MariaDB 11.4、InnoDB；默认字符集和排序规则为 utf8mb4 / utf8mb4_unicode_ci。
 - 时间：以 BIGINT 保存 Unix epoch 毫秒。服务端写入时间与客户端条目修改时间分列保存。
-- 密文：条目和 rekey payload 使用二进制列；摘要使用 SHA-256 十六进制字符串。
+- 密文：条目和 rekey payload 使用二进制列；摘要当前仍以 SHA-256 十六进制字符串保存，后续二进制摘要迁移必须同步更新 API 读写转换。
 - 条目身份：客户端生成 UUID。主键以 vault_id 和 item_uuid 组合，避免跨库冲突。
-- 同步删除：永久删除时删除对应 vault_items 或 vault_user_profiles 行，在同一事务写 item_changes op=2 和 item_tombstones。变更日志按期清理，但最小删除证据保留至云库删除；普通 upsert 不能复用已删除 UUID，恢复必须使用新 UUID。0005 迁移只能从仍保留的删除事件回填墓碑。
+- 同步删除：永久删除时删除对应 vault_items 行，在同一事务写 item_changes op=2 和 item_tombstones。变更日志按期清理，但最小删除证据保留至云库删除；普通 upsert 不能复用已删除 UUID，恢复必须使用新 UUID。0005 迁移只能从仍保留的删除事件回填墓碑。
 - 外键：用户删除会级联删除会话和库；库删除会级联删除条目、变更、附件和改密任务；改密任务删除会级联删除暂存内容。
 - 逻辑引用：attachments.card_uuid 指向加密条目中的卡片 ID，不设外键，因为服务端无法解密并验证条目种类。维护任务清理孤儿元数据和对象。
 
@@ -54,7 +57,6 @@ erDiagram
     users ||--o{ vaults : owns
     users ||..o{ audit_log : "user_id logical"
     vaults ||--o{ vault_items : stores
-    vaults ||--o{ vault_user_profiles : stores
     vaults ||--o{ item_changes : records
     vaults ||--o{ item_tombstones : retains
     vaults ||--o{ item_conflicts : tracks
@@ -74,8 +76,7 @@ erDiagram
     websites ||--o{ website_domains : maps
     vault_items ||..o{ attachments : "card_uuid logical"
     attachments ||..o{ attachment_versions : "current content_version"
-    vault_items ||..|| vault_sync_items : "UNION ALL view"
-    vault_user_profiles ||..|| vault_sync_items : "UNION ALL view"
+    vault_items ||..|| vault_sync_items : "compatibility view"
     email_codes
 
     users {
@@ -135,21 +136,6 @@ erDiagram
         int body_bytes "条目密文字节数"
         bigint modified_ms "客户端条目修改时间"
         bigint created_ms "条目创建时间"
-        bigint updated_ms "服务端最近写入时间"
-        varchar origin_session_id "来源会话快照"
-        varchar origin_device_name "来源设备名称快照"
-        varchar origin_platform "来源平台快照"
-    }
-    vault_user_profiles {
-        varchar vault_id PK "所属密码库 ID"
-        char item_uuid PK "客户端生成的个人资料 UUID"
-        tinyint kind "固定为个人资料类型"
-        bigint revision "个人资料修订号"
-        blob body "个人资料密文"
-        char body_sha256 "个人资料密文 SHA-256"
-        int body_bytes "个人资料密文字节数"
-        bigint modified_ms "客户端修改时间"
-        bigint created_ms "个人资料创建时间"
         bigint updated_ms "服务端最近写入时间"
         varchar origin_session_id "来源会话快照"
         varchar origin_device_name "来源设备名称快照"
@@ -337,7 +323,7 @@ erDiagram
     }
 ~~~
 
-字段后的双引号文字为含义备注，不是数据库列。`vault_sync_items` 是由 `vault_items` 和 `vault_user_profiles` 通过 `UNION ALL` 组成的视图，不是基础表。`email_codes` 通过 HMAC 邮箱键匹配用户，没有外键；这使首次注册前也能保存验证码。`audit_log` 的 `user_id` 和 `vault_id` 是可空审计属性，不设外键，以便保留注销或删除后的审计记录。ER 图中的附件到卡片、当前附件到内容版本关系均为逻辑关联，不是数据库约束。
+字段后的双引号文字为含义备注，不是数据库列。`vault_sync_items` 是 `vault_items` 的兼容视图，不是基础表。`email_codes` 通过 HMAC 邮箱键匹配用户，没有外键；这使首次注册前也能保存验证码。`audit_log` 的 `user_id` 和 `vault_id` 是可空审计属性，不设外键，以便保留注销或删除后的审计记录。ER 图中的附件到卡片关系仍为逻辑关联；当前附件到内容版本关系已由 0011 增加复合外键。
 
 ## 表与约束
 
@@ -348,8 +334,8 @@ erDiagram
 | sessions | 设备授权；id 主键，token_hash 唯一，user_id 外键级联。按 (user_id, expires_ms) 查询用户设备和有效期。数据库不保存原始 bearer token。 |
 | vaults | 用户密码库注册表；vault_id 主键，(user_id, name) 唯一，user_id 外键级联。保存信封、密码版本、head_seq、变更保留地板及配额计数。 |
 | vault_items | 卡片与标签的行级密文；(vault_id, item_uuid) 复合主键。按 (vault_id, updated_ms, item_uuid) 建索引，服务全量重建的 keyset 分页。本表存 kind=1 卡片、kind=2 标签。 |
-| vault_user_profiles | 个人资料的 kind=3 密文行；列结构和分页索引与 vault_items 一致，kind 受 CHECK 约束，vault_id 外键级联。姓名、联系方式和偏好保存在客户端密文中。 |
-| vault_sync_items（视图） | UNION ALL 合并 vault_items 和 vault_user_profiles，统一读取、计数和改密身份检查；写入按已验证的固定种类选择物理表。UUID 跨表唯一由同一库行锁及 API 写入规则保证。 |
+| vault_items | 所有 kind=1/2/3 的客户端密文行；(vault_id,item_uuid) 主键，kind 受 CHECK 约束，个人资料与卡片/标签共享同一物理表。姓名、联系方式和偏好仍保存在客户端密文中。 |
+| vault_sync_items（视图） | `vault_items` 的兼容读取视图，统一服务旧 SQL 查询；新写入直接使用 `vault_items`。 |
 | item_changes | 增量同步变更日志；seq 全局自增主键，(vault_id, seq) 支持游标扫描。op=1 表示 upsert，op=2 表示永久删除，op=3 表示库级 rekey，op=4 表示原子冲突裁决；裁决事件保留原 UUID、最终身份、共同 revision 和获胜候选身份。 |
 | item_tombstones | 持久删除证据；(vault_id, item_uuid) 主键，保存删除 revision、变更序号和来源快照。只随云库删除清理，不能因变更日志过期而删除。 |
 | item_conflicts | 条目冲突集合；保存共同/current revision、当前删除序号、候选代次、裁决状态、选中候选和结果身份。未解决集合不设置到期时间；已解决集合在 30 天后由维护任务级联清理。 |
@@ -375,8 +361,10 @@ erDiagram
 
 ## SQL
 
-基础表定义见 [0001_init.sql](database/0001_init.sql)，个人资料扩展见
-[0002_user_profiles.sql](database/0002_user_profiles.sql)，后续 schema 迁移按 `0003`–`0010` 顺序执行。
+基础表定义见 [0001_init.sql](database/0001_init.sql)，个人资料兼容扩展见
+[0002_user_profiles.sql](database/0002_user_profiles.sql)，合表和约束加固见
+[0011_schema_hardening.sql](database/0011_schema_hardening.sql)，后续 schema 迁移按
+`0003`–`0011` 顺序执行。
 包括冲突候选及指纹扩展 `0003_conflict_candidates.sql`、`0004_conflict_candidate_fingerprint.sql`、
 `0005_conflict_resolution.sql`、`0006_conflict_resolution_change_events.sql` 与
 `0007_composed_conflict_resolutions.sql`，以及附件版本和 rekey 扩展 `0008`–`0010`。首次部署时由 DBA 先执行数据库与最小权限账号初始化，再按序对目标库应用 DDL：
@@ -403,6 +391,7 @@ mariadb --defaults-extra-file=/secure/path/mariadb-client.cnf --default-characte
 mariadb --defaults-extra-file=/secure/path/mariadb-client.cnf --default-character-set=utf8mb4 upasswords < Cloud/database/0008_attachment_versions.sql
 mariadb --defaults-extra-file=/secure/path/mariadb-client.cnf --default-character-set=utf8mb4 upasswords < Cloud/database/0009_attachment_purge_state.sql
 mariadb --defaults-extra-file=/secure/path/mariadb-client.cnf --default-character-set=utf8mb4 upasswords < Cloud/database/0010_rekey_conflict_candidates.sql
+mariadb --defaults-extra-file=/secure/path/mariadb-client.cnf --default-character-set=utf8mb4 upasswords < Cloud/database/0011_schema_hardening.sql
 ~~~
 
 应用运行账号不授予 CREATE、ALTER、DROP 或 mysql.* 权限。生产端迁移和环境变量管理按 [Cloud/api/README.md](api/README.md) 执行；不要将真实凭据写入仓库。

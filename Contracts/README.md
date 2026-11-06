@@ -82,7 +82,7 @@ macOS/iOS 与四种浏览器扩展均可查看并选择完整候选；候选均�
 组合。浏览器验证候选摘要并以完整候选集 CAS 提交合成密文；删除后恢复会以新 UUID/AAD 重新加密。完整候选裁决会连同所选卡片的附件版本清单原子激活；恢复到新条目身份时，服务端在同一事务中迁移所选附件版本归属。字段组合仍拒绝含附件候选。macOS/iOS 与四种浏览器扩展均可把活动候选及其附件另存为新条目；扩展先复制并重新加密附件、复核候选集，结果不确定时禁止重复提交。永久损坏候选在 macOS/iOS 以 VEK 独立加密隔离并可重试；四种扩展可导出保护备份，保留原始候选密文并标记不完整。扩展也支持普通同步行的损坏隔离和重试；iOS AutoFill 会按条目阻止存在待裁决标记的凭据；浏览器端已在实际填充前按稳定字段 ID 门控已知冲突 token，删除、不可解密或身份不可靠时按条目阻止，清单不可取得时 fail-closed，并仅持久化账户/库范围的不含秘密状态。协议 5 和裁决服务已部署，旧协议客户端由门控拒绝同步；新客户端正式分发与混合版本验收尚未完成。
 原生端改密会重新加密所有可读候选并更新候选指纹；候选不可解密或清单变化时整笔改密中止。候选附件引用事务已接入；永久损坏候选由原生端独立加密隔离，扩展端可导出保护备份。游标过期触发保护性暂停时，macOS/iOS 同步设置会提示本机数据已保留，并提供“先备份，再采用云端快照”的人工恢复。
 
-生产已部署数据库迁移 `0001`–`0010` 和同步协议 5。同步数据 API 强制要求
+生产已部署数据库迁移 `0001`–`0010` 和同步协议 5；源码新增的 `0011` 待部署流程执行后生效。同步数据 API 强制要求
 `X-UPW-Sync-Protocol: 5`；缺失或旧版本会在读取条目快照/变更事件及执行写入前得到 HTTP 426
 和 `client_upgrade_required`。账户认证与库目录路由不受门控影响。协议 5 的卡片 upsert 必须携带完整的
 `attachmentRefs` 数组，空卡片也必须显式发送空数组。Swift 与浏览器扩展共享客户端现已声明协议 5，
@@ -108,11 +108,11 @@ macOS/iOS 与四种浏览器扩展均可查看并选择完整候选；候选均�
 `site-hint` 由后台按发送页和当前页的同源校验计算，仅返回匹配数量与解锁状态。账号框获得焦点时，`site-candidates` 最多返回 8 个匹配条目的 ID、标题和用户名，不返回密码、备注或 XML；用户选中后，后台重新验证活动标签页、解锁会话、自动填充开关、冲突门控与网站匹配，再将单条用户名/密码通过该次扩展消息响应交给发起选择的内容脚本。内容脚本验证精确 `expectedOrigin` 并只填入当前可见登录字段，不自动提交；HTTP 页面须先经用户确认。密码仅在明确点击后跨入扩展隔离环境，不写入网页可读存储或日志。`open-vault` 请求打开插件弹窗，不自动填充。
 消息形状见 `extension-message.schema.json`，TypeScript 定义见 `WebExtensions/shared/src/messaging/protocol.ts`。
 
-个人资料独立于 cards：本地加密库中的 userProfiles 集合以 user_profile XML 元素序列化，并参与备份、恢复和改密。行级同步使用 kind=1（card）、kind=2（label）、kind=3（user profile）。Go API 将 kind=3 的客户端密文保存于 vault_user_profiles，通过 vault_sync_items 视图统一处理快照、增量、配额和 rekey；姓名、电话、地址等值不成为 SQL 明文列。
+个人资料独立于 cards：本地加密库中的 userProfiles 集合以 user_profile XML 元素序列化，并参与备份、恢复和改密。行级同步使用 kind=1（card）、kind=2（label）、kind=3（user profile）。Go API 将三种 kind 的客户端密文统一保存于 vault_items；姓名、电话、地址等值不成为 SQL 明文列。
 
-同一库中 UUID 在两个物理条目表之间保持唯一，由库行锁串行化写入。旧个人资料卡可用相同 UUID、匹配的 baseRevision 和 kind=3 上行迁入专表：保留创建时间、计数和 UUID，revision 加一。服务端不能识别密文是否属于个人资料，由升级后的客户端明确请求迁移。其他种类变更返回 409 record_type_changed；旧客户端用过期 revision 写入则仍走 CAS conflict。删除按服务端现存种类选表，兼容旧客户端的 kind=1 删除请求。所有类型共享 purge/not_found、游标及改密规则，见 [Cloud/DATABASE.md](../Cloud/DATABASE.md)。
+同一库中 UUID 在统一的 vault_items 主键上保持唯一。旧个人资料卡可用相同 UUID、匹配的 baseRevision 和 kind=3 上行迁移；保留创建时间和 UUID，revision 加一。服务端不能识别密文是否属于个人资料，由升级后的客户端明确请求迁移。其他种类变更返回 409 record_type_changed；旧客户端用过期 revision 写入则仍走 CAS conflict。所有类型共享 purge/not_found、游标及改密规则，见 [Cloud/DATABASE.md](../Cloud/DATABASE.md)。
 
-启用该 API 前须先应用 0002_user_profiles.sql；已提交实现与生产部署状态应分别核实。
+启用该 API 前须按序应用 0002_user_profiles.sql 至 0011_schema_hardening.sql；已提交实现与生产部署状态应分别核实。
 
 ## 便携式自包含备份归档
 

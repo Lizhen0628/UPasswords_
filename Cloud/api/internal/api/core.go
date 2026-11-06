@@ -392,6 +392,7 @@ func (s *Server) audit(ctx context.Context, action, uid, vid string, detail any)
 		s.Log.Error("audit write failed", "action", action)
 	}
 }
+
 func nullable(v string) any {
 	if v == "" {
 		return nil

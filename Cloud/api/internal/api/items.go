@@ -155,33 +155,21 @@ func (s *Server) itemsPost(w http.ResponseWriter, r *http.Request) error {
 			if exists && currentKind != i.Kind && !(currentKind == 1 && i.Kind == 3) && i.Op == "upsert" {
 				return fail(409, "record_type_changed")
 			}
-			// Preserve the logical record creation time while moving legacy card ciphertext.
+			// Preserve the logical record creation time across kind changes.
 			if !exists {
 				created = ts
-			}
-			table := itemTable(i.Kind)
-			if exists && i.Op == "delete" {
-				table = itemTable(currentKind)
-			}
-			migrating := exists && currentKind != i.Kind && i.Op == "upsert"
-			if migrating {
-				if _, e = t.ExecContext(r.Context(), "DELETE FROM "+itemTable(currentKind)+" WHERE vault_id=? AND item_uuid=?", vid, i.UUID); e != nil {
-					return e
-				}
 			}
 			op := 1
 			newRev := rev + 1
 			if i.Op == "upsert" {
-				if !exists || migrating {
-					if !exists {
-						v.Count++
-					}
+				if !exists {
+					v.Count++
 					if v.Count > s.Config.limit("ITEMS_PER_VAULT_LIMIT") {
 						return fail(413, "quota_exceeded")
 					}
-					_, e = t.ExecContext(r.Context(), "INSERT INTO "+table+"(vault_id,item_uuid,kind,revision,body,body_sha256,body_bytes,modified_ms,created_ms,updated_ms,origin_session_id,origin_device_name,origin_platform) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", vid, i.UUID, i.Kind, newRev, i.Body, *i.SHA256, len(i.Body), *i.ModifiedMS, created, ts, a.SessionID, a.DeviceName, a.Platform)
+					_, e = t.ExecContext(r.Context(), "INSERT INTO vault_items(vault_id,item_uuid,kind,revision,body,body_sha256,body_bytes,modified_ms,created_ms,updated_ms,origin_session_id,origin_device_name,origin_platform) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", vid, i.UUID, i.Kind, newRev, i.Body, *i.SHA256, len(i.Body), *i.ModifiedMS, created, ts, a.SessionID, a.DeviceName, a.Platform)
 				} else {
-					_, e = t.ExecContext(r.Context(), "UPDATE "+table+" SET kind=?,revision=?,body=?,body_sha256=?,body_bytes=?,modified_ms=?,updated_ms=?,origin_session_id=?,origin_device_name=?,origin_platform=? WHERE vault_id=? AND item_uuid=?", i.Kind, newRev, i.Body, *i.SHA256, len(i.Body), *i.ModifiedMS, ts, a.SessionID, a.DeviceName, a.Platform, vid, i.UUID)
+					_, e = t.ExecContext(r.Context(), "UPDATE vault_items SET kind=?,revision=?,body=?,body_sha256=?,body_bytes=?,modified_ms=?,updated_ms=?,origin_session_id=?,origin_device_name=?,origin_platform=? WHERE vault_id=? AND item_uuid=?", i.Kind, newRev, i.Body, *i.SHA256, len(i.Body), *i.ModifiedMS, ts, a.SessionID, a.DeviceName, a.Platform, vid, i.UUID)
 				}
 				if e != nil {
 					return e
@@ -232,7 +220,7 @@ func (s *Server) itemsPost(w http.ResponseWriter, r *http.Request) error {
 				if _, e = t.ExecContext(r.Context(), "DELETE FROM attachments WHERE vault_id=? AND card_uuid=?", vid, i.UUID); e != nil {
 					return e
 				}
-				if _, e = t.ExecContext(r.Context(), "DELETE FROM "+table+" WHERE vault_id=? AND item_uuid=?", vid, i.UUID); e != nil {
+				if _, e = t.ExecContext(r.Context(), "DELETE FROM vault_items WHERE vault_id=? AND item_uuid=?", vid, i.UUID); e != nil {
 					return e
 				}
 				v.Count--
@@ -452,13 +440,4 @@ func (s *Server) changes(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeJSON(w, 200, map[string]any{"headSeq": v.Head, "changes": out})
 	return nil
-}
-
-// itemTable maps previously validated kinds to fixed SQL identifiers.
-// Callers hold the vault row lock when moving records to preserve cross-table UUID uniqueness.
-func itemTable(kind int) string {
-	if kind == 3 {
-		return "vault_user_profiles"
-	}
-	return "vault_items"
 }

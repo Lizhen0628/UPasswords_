@@ -46,22 +46,51 @@ func (s *Server) conflictsList(w http.ResponseWriter, r *http.Request) error {
 	if _, e := loadVault(r.Context(), s.DB, identity(r).UserID, vid, false); e != nil {
 		return e
 	}
-	rows, e := s.DB.QueryContext(r.Context(), "SELECT conflict_id,item_uuid,base_revision,current_revision,current_deleted_seq,generation,created_ms,updated_ms FROM item_conflicts WHERE vault_id=? AND status='open' ORDER BY updated_ms,conflict_id", vid)
+	rows, e := s.DB.QueryContext(r.Context(), `
+		SELECT c.conflict_id,c.item_uuid,c.base_revision,c.current_revision,c.current_deleted_seq,
+		       c.generation,c.created_ms,c.updated_ms,
+		       COALESCE(cc.candidate_id,''),COALESCE(cc.source_session_id,''),
+		       COALESCE(cc.source_device_name,''),COALESCE(cc.source_platform,''),
+		       COALESCE(cc.kind,0),COALESCE(cc.op,0),COALESCE(cc.revision,0),
+		       COALESCE(cc.modified_ms,0),COALESCE(cc.committed_ms,0),
+		       cc.body,cc.body_sha256
+		FROM item_conflicts c
+		LEFT JOIN item_conflict_candidates cc ON cc.conflict_id=c.conflict_id
+		WHERE c.vault_id=? AND c.status='open'
+		ORDER BY c.updated_ms,c.conflict_id,cc.committed_ms,cc.candidate_id`, vid)
 	if e != nil {
 		return e
 	}
-	type conflictRow struct {
+	type conflictGroup struct {
 		id, item                                                string
 		base, current, deletedSeq, generation, created, updated int64
+		candidates                                              []map[string]any
 	}
-	groups := []conflictRow{}
+	groups := make([]*conflictGroup, 0)
+	byID := make(map[string]*conflictGroup)
 	for rows.Next() {
-		var group conflictRow
-		if e = rows.Scan(&group.id, &group.item, &group.base, &group.current, &group.deletedSeq, &group.generation, &group.created, &group.updated); e != nil {
+		var group conflictGroup
+		var candidate conflictCandidateRow
+		if e = rows.Scan(
+			&group.id, &group.item, &group.base, &group.current, &group.deletedSeq,
+			&group.generation, &group.created, &group.updated,
+			&candidate.ID, &candidate.SourceSession, &candidate.DeviceName,
+			&candidate.Platform, &candidate.Kind, &candidate.Op, &candidate.Revision,
+			&candidate.Modified, &candidate.Committed, &candidate.Body, &candidate.SHA,
+		); e != nil {
 			rows.Close()
 			return e
 		}
-		groups = append(groups, group)
+		actual, ok := byID[group.id]
+		if !ok {
+			actual = &group
+			actual.candidates = []map[string]any{}
+			byID[group.id] = actual
+			groups = append(groups, actual)
+		}
+		if candidate.ID != "" {
+			actual.candidates = append(actual.candidates, candidate.wire())
+		}
 	}
 	e = rows.Err()
 	rows.Close()
@@ -70,10 +99,6 @@ func (s *Server) conflictsList(w http.ResponseWriter, r *http.Request) error {
 	}
 	out := make([]map[string]any, 0, len(groups))
 	for _, group := range groups {
-		candidates, e := s.conflictCandidates(r, group.id)
-		if e != nil {
-			return e
-		}
 		out = append(out, map[string]any{
 			"conflictId":        group.id,
 			"itemUuid":          group.item,
@@ -83,28 +108,11 @@ func (s *Server) conflictsList(w http.ResponseWriter, r *http.Request) error {
 			"generation":        group.generation,
 			"createdMs":         group.created,
 			"updatedMs":         group.updated,
-			"candidates":        candidates,
+			"candidates":        group.candidates,
 		})
 	}
 	writeJSON(w, 200, map[string]any{"conflicts": out})
 	return nil
-}
-
-func (s *Server) conflictCandidates(r *http.Request, conflictID string) ([]map[string]any, error) {
-	rows, e := s.DB.QueryContext(r.Context(), "SELECT candidate_id,COALESCE(source_session_id,''),source_device_name,source_platform,kind,op,revision,modified_ms,committed_ms,body,body_sha256 FROM item_conflict_candidates WHERE conflict_id=? ORDER BY committed_ms,candidate_id", conflictID)
-	if e != nil {
-		return nil, e
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var candidate conflictCandidateRow
-		if e = rows.Scan(&candidate.ID, &candidate.SourceSession, &candidate.DeviceName, &candidate.Platform, &candidate.Kind, &candidate.Op, &candidate.Revision, &candidate.Modified, &candidate.Committed, &candidate.Body, &candidate.SHA); e != nil {
-			return nil, e
-		}
-		out = append(out, candidate.wire())
-	}
-	return out, rows.Err()
 }
 
 // conflictRegister stores the live remote ciphertext and an authenticated client's competing ciphertext.

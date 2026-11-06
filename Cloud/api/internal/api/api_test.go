@@ -112,6 +112,25 @@ func testServer(t *testing.T) (*Server, *testMailer) {
 	}
 	// Glob sorts numbered migrations lexically; production applies the same sequence explicitly.
 	for _, path := range schemas {
+		migrationName := filepath.Base(path)
+		migrationVersion, parseErr := strconv.Atoi(strings.SplitN(migrationName, "_", 2)[0])
+		if parseErr == nil && migrationVersion <= 11 {
+			var applied int
+			if err := db.QueryRow(
+				"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='schema_migrations'",
+			).Scan(&applied); err != nil {
+				t.Fatal(err)
+			}
+			if applied == 1 {
+				var version int
+				if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version>=?", migrationVersion).Scan(&version); err != nil {
+					t.Fatal(err)
+				}
+				if version == 1 {
+					continue
+				}
+			}
+		}
 		schema, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

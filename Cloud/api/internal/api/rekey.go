@@ -371,9 +371,6 @@ func (s *Server) rekeyCommit(w http.ResponseWriter, r *http.Request) error {
 		if _, e = t.ExecContext(r.Context(), "UPDATE vault_items i JOIN rekey_staging s ON s.rekey_id=? AND s.kind=1 AND s.item_uuid=i.item_uuid SET i.revision=i.revision+1,i.body=s.payload,i.body_sha256=s.sha256,i.body_bytes=LENGTH(s.payload),i.updated_ms=? WHERE i.vault_id=?", rid, ts, vid); e != nil {
 			return e
 		}
-		if _, e = t.ExecContext(r.Context(), "UPDATE vault_user_profiles i JOIN rekey_staging s ON s.rekey_id=? AND s.kind=1 AND s.item_uuid=i.item_uuid SET i.revision=i.revision+1,i.body=s.payload,i.body_sha256=s.sha256,i.body_bytes=LENGTH(s.payload),i.updated_ms=? WHERE i.vault_id=?", rid, ts, vid); e != nil {
-			return e
-		}
 		if _, e = t.ExecContext(r.Context(), "UPDATE attachment_versions av JOIN rekey_attachment_staging s ON s.rekey_id=? AND s.vault_id=av.vault_id AND s.attach_uuid=av.attach_uuid AND s.content_version=av.content_version SET av.dek_wrapped=s.dek_wrapped WHERE av.vault_id=?", rid, vid); e != nil {
 			return e
 		}

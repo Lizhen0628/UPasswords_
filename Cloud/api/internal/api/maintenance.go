@@ -248,7 +248,7 @@ func (s *Server) Maintain(ctx context.Context) error {
 	for _, q := range []struct {
 		sql string
 		arg int64
-	}{{"DELETE FROM rekeys WHERE expires_ms<?", now()}, {"DELETE FROM email_codes WHERE expires_ms<?", now() - dayMS}, {"DELETE FROM audit_log WHERE ts_ms<?", now() - 180*dayMS}} {
+	}{{"DELETE FROM rekeys WHERE expires_ms<?", now()}, {"DELETE FROM email_codes WHERE expires_ms<?", now() - dayMS}, {"DELETE FROM audit_log WHERE ts_ms<?", now() - 180*dayMS}, {"DELETE FROM sessions WHERE expires_ms<?", now() - 30*dayMS}, {"DELETE FROM sessions WHERE revoked_ms IS NOT NULL AND revoked_ms<?", now() - 180*dayMS}} {
 		if _, e = s.DB.ExecContext(ctx, q.sql, q.arg); e != nil {
 			return e
 		}

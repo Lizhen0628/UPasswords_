@@ -214,7 +214,7 @@ func (s *Server) conflictResolve(w http.ResponseWriter, r *http.Request) error {
 					sha = digest(body)
 					modified = *b.MergedModifiedMS
 				}
-				if _, e = t.ExecContext(r.Context(), "UPDATE "+itemTable(currentKind)+" SET revision=?,body=?,body_sha256=?,body_bytes=?,modified_ms=?,updated_ms=?,origin_session_id=?,origin_device_name=?,origin_platform=? WHERE vault_id=? AND item_uuid=?", newRevision, body, sha, len(body), modified, ts, a.SessionID, a.DeviceName, a.Platform, vid, itemID); e != nil {
+				if _, e = t.ExecContext(r.Context(), "UPDATE vault_items SET revision=?,body=?,body_sha256=?,body_bytes=?,modified_ms=?,updated_ms=?,origin_session_id=?,origin_device_name=?,origin_platform=? WHERE vault_id=? AND item_uuid=?", newRevision, body, sha, len(body), modified, ts, a.SessionID, a.DeviceName, a.Platform, vid, itemID); e != nil {
 					return e
 				}
 				resolvedItemID = itemID
@@ -231,7 +231,7 @@ func (s *Server) conflictResolve(w http.ResponseWriter, r *http.Request) error {
 						return e
 					}
 				}
-				if _, e = t.ExecContext(r.Context(), "DELETE FROM "+itemTable(currentKind)+" WHERE vault_id=? AND item_uuid=?", vid, itemID); e != nil {
+				if _, e = t.ExecContext(r.Context(), "DELETE FROM vault_items WHERE vault_id=? AND item_uuid=?", vid, itemID); e != nil {
 					return e
 				}
 				v.Count--
@@ -264,7 +264,7 @@ func (s *Server) conflictResolve(w http.ResponseWriter, r *http.Request) error {
 				return fail(409, "item_id_reused")
 			}
 			sha := digest(body)
-			if _, e = t.ExecContext(r.Context(), "INSERT INTO "+itemTable(winner.Kind)+"(vault_id,item_uuid,kind,revision,body,body_sha256,body_bytes,modified_ms,created_ms,updated_ms,origin_session_id,origin_device_name,origin_platform) VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?)", vid, newItemID, winner.Kind, body, sha, len(body), ts, ts, ts, a.SessionID, a.DeviceName, a.Platform); e != nil {
+			if _, e = t.ExecContext(r.Context(), "INSERT INTO vault_items(vault_id,item_uuid,kind,revision,body,body_sha256,body_bytes,modified_ms,created_ms,updated_ms,origin_session_id,origin_device_name,origin_platform) VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?)", vid, newItemID, winner.Kind, body, sha, len(body), ts, ts, ts, a.SessionID, a.DeviceName, a.Platform); e != nil {
 				return e
 			}
 			v.Count++

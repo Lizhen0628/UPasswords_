@@ -13,7 +13,7 @@ import (
 
 // CheckDependencies checks production credentials without sending mail or changing stored data.
 func (s *Server) CheckDependencies(ctx context.Context) error {
-	for _, table := range []string{"users", "sessions", "email_codes", "vaults", "vault_items", "vault_user_profiles", "vault_sync_items", "item_changes", "attachments", "rekeys", "rekey_staging", "audit_log", "websites", "website_domains"} {
+	for _, table := range []string{"users", "sessions", "email_codes", "vaults", "vault_items", "vault_sync_items", "item_changes", "attachments", "attachment_versions", "attachment_version_conflicts", "attachment_tombstones", "rekeys", "rekey_staging", "rekey_attachment_staging", "rekey_conflict_manifests", "rekey_conflict_staging", "item_conflicts", "item_conflict_candidates", "item_tombstones", "audit_log", "websites", "website_domains", "schema_migrations"} {
 		var count int
 		if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
 			return errors.New("database schema check failed: " + table)

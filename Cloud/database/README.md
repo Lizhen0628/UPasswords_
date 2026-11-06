@@ -5,11 +5,14 @@ API does not create or migrate production tables at startup; database administra
 apply SQL from this directory using a privileged deployment account. The API's
 runtime account must remain limited to application data operations.
 
-`0002_user_profiles.sql` adds the dedicated kind=3 ciphertext table and the
-`vault_sync_items` view used by Go handlers for snapshots, deltas, quotas and
-rekey. Migrations through `0010_rekey_conflict_candidates.sql` are present in this
-repository and were already applied to production on 2026-10-27. Verify the remote
-migration directory and live schema before planning any later operation.
+`0002_user_profiles.sql` temporarily adds the dedicated kind=3 ciphertext table.
+`0011_schema_hardening.sql` moves those rows into `vault_items`, removes the
+physical profile table, and retains `vault_sync_items` as a one-table compatibility
+view. It also adds tenant-scoped foreign keys, retention indexes, structured
+verification-code rate-limit fields, session cleanup indexes, and the migration
+ledger. Migrations through `0010_rekey_conflict_candidates.sql` were already applied
+to production on 2026-10-27; `0011` must be applied only after verifying the live
+profile rows and attachment pointers.
 `0003_conflict_candidates.sql` adds encrypted conflict candidate storage
 and immutable item-origin snapshots. `0004_conflict_candidate_fingerprint.sql`
 adds the VEK-derived HMAC fingerprint used for idempotent retries.
@@ -24,11 +27,10 @@ results. `0008_attachment_versions.sql` adds immutable encrypted attachment vers
 and retained conflict references, `0009_attachment_purge_state.sql` adds retryable
 object deletion, and `0010_rekey_conflict_candidates.sql` adds encrypted conflict
 candidate staging during vault rekey. Apply available migrations in lexical order for
-a new database. An existing database needs only migrations not already applied. There
-is no separate migration ledger, so record the applied range in the deployment record
-and verify the schema before applying changes. The API never executes DDL; its `check`
-command requires the schema for its build. Production does not auto-migrate and must
-never be reset without a new, explicit authorization.
+a new database. An existing database needs only migrations not already applied; from
+`0011` onward, `schema_migrations` records the applied version and filename. The API
+never executes DDL; its `check` command requires the schema for its build. Production
+does not auto-migrate and must never be reset without a new, explicit authorization.
 
 Add future changes as ordered files such as `0011_add_example.sql`. Once a migration
 has been applied to a shared or production database, treat it as immutable and add a

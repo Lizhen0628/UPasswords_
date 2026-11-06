@@ -158,21 +158,22 @@ func (s *Server) code(w http.ResponseWriter, r *http.Request) error {
 			return &apiError{429, "rate_limited", int((cool - (ts - last) + 999) / 1000)}
 		}
 		var ce, ci int64
-		if e = t.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM audit_log WHERE action='code_send' AND detail LIKE ? AND ts_ms>?", "%"+eh+"%", ts-3600000).Scan(&ce); e != nil {
+		if e = t.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM audit_log WHERE action='code_send' AND email_hmc=? AND ts_ms>?", eh, ts-3600000).Scan(&ce); e != nil {
 			return e
 		}
 		iph := s.mac("ip:" + ip)
-		if e = t.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM audit_log WHERE action='code_send' AND detail LIKE ? AND ts_ms>?", "%"+iph+"%", ts-3600000).Scan(&ci); e != nil {
+		if e = t.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM audit_log WHERE action='code_send' AND ip_hmc=? AND ts_ms>?", iph, ts-3600000).Scan(&ci); e != nil {
 			return e
 		}
 		if ce >= s.Config.limit("CODE_HOURLY_PER_EMAIL") || ci >= s.Config.limit("CODE_HOURLY_PER_IP") {
 			return &apiError{429, "rate_limited", 3600}
 		}
-		_, e = t.ExecContext(r.Context(), "INSERT INTO email_codes(email_hmc,purpose,code_hash,ip,expires_ms,attempts,used_ms,created_ms) VALUES(?,?,?,?,?,0,NULL,?) ON DUPLICATE KEY UPDATE code_hash=VALUES(code_hash),ip=VALUES(ip),expires_ms=VALUES(expires_ms),attempts=0,used_ms=NULL,created_ms=VALUES(created_ms)", eh, purpose, s.mac("code:"+eh+":"+code+":"+purpose), ip, ts+s.Config.limit("CODE_TTL_SECONDS")*1000, ts)
+		ipHMC := s.mac("ip:" + ip)
+		_, e = t.ExecContext(r.Context(), "INSERT INTO email_codes(email_hmc,purpose,code_hash,ip_hmc,expires_ms,attempts,used_ms,created_ms) VALUES(?,?,?,?,?,0,NULL,?) ON DUPLICATE KEY UPDATE code_hash=VALUES(code_hash),ip_hmc=VALUES(ip_hmc),expires_ms=VALUES(expires_ms),attempts=0,used_ms=NULL,created_ms=VALUES(created_ms)", eh, purpose, s.mac("code:"+eh+":"+code+":"+purpose), ipHMC, ts+s.Config.limit("CODE_TTL_SECONDS")*1000, ts)
 		if e != nil {
 			return e
 		}
-		_, e = t.ExecContext(r.Context(), "INSERT INTO audit_log(action,detail,ts_ms) VALUES('code_send',?,?)", fmt.Sprintf("emailHmc=%s ipHmc=%s purpose=%s", eh, iph, purpose), ts)
+		_, e = t.ExecContext(r.Context(), "INSERT INTO audit_log(action,email_hmc,ip_hmc,purpose,detail,ts_ms) VALUES('code_send',?,?,?,?,?)", eh, ipHMC, purpose, "", ts)
 		return e
 	})
 	if e != nil {

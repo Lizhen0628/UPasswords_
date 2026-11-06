@@ -39,7 +39,7 @@ func TestEncryptedProfileTableMigrationSyncRekeyAndDelete(t *testing.T) {
 	if status != 200 || result(out)["revision"] != float64(1) {
 		t.Fatalf("legacy row: %d %v", status, out)
 	}
-	// A table move must preserve logical record creation time, revision and quota.
+	// A kind change must preserve logical record creation time, revision and quota.
 	if _, err := s.DB.Exec("UPDATE vault_items SET created_ms=123 WHERE vault_id=? AND item_uuid=?", vid, id); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestEncryptedProfileTableMigrationSyncRekeyAndDelete(t *testing.T) {
 		t.Fatalf("profile migration: %d %v", status, out)
 	}
 	var created int64
-	if err := s.DB.QueryRow("SELECT created_ms FROM vault_user_profiles WHERE vault_id=? AND item_uuid=?", vid, id).Scan(&created); err != nil || created != 123 {
+	if err := s.DB.QueryRow("SELECT created_ms FROM vault_items WHERE vault_id=? AND item_uuid=?", vid, id).Scan(&created); err != nil || created != 123 {
 		t.Fatalf("profile migration changed creation time: %d, %v", created, err)
 	}
 	if code, conflict := call(t, h, "POST", "/v1/vaults/"+vid+"/items", token, map[string]any{"items": []any{incoming(id, 3, 1, "stale-cipher")}}); code != 200 || result(conflict)["status"] != "conflict" {
@@ -64,13 +64,10 @@ func TestEncryptedProfileTableMigrationSyncRekeyAndDelete(t *testing.T) {
 	if err := s.DB.QueryRow("SELECT COUNT(*) FROM vault_items WHERE vault_id=?", vid).Scan(&cards); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM vault_user_profiles WHERE vault_id=?", vid).Scan(&profiles); err != nil {
-		t.Fatal(err)
+	if cards != 1 {
+		t.Fatalf("unified item table count: %d", cards)
 	}
-	if cards != 0 || profiles != 1 {
-		t.Fatalf("table isolation: cards=%d profiles=%d", cards, profiles)
-	}
-	if err := s.DB.QueryRow("SELECT body FROM vault_user_profiles WHERE vault_id=?", vid).Scan(&stored); err != nil {
+	if err := s.DB.QueryRow("SELECT body FROM vault_items WHERE vault_id=?", vid).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(stored, encrypted) || bytes.Contains(stored, []byte("fixture@example.com")) {
@@ -99,7 +96,7 @@ func TestEncryptedProfileTableMigrationSyncRekeyAndDelete(t *testing.T) {
 		t.Fatalf("rekey commit: %d %v", status, out)
 	}
 	var revision, kind int
-	if err := s.DB.QueryRow("SELECT revision,kind,body FROM vault_user_profiles WHERE vault_id=?", vid).Scan(&revision, &kind, &stored); err != nil {
+	if err := s.DB.QueryRow("SELECT revision,kind,body FROM vault_items WHERE vault_id=?", vid).Scan(&revision, &kind, &stored); err != nil {
 		t.Fatal(err)
 	}
 	if revision != 3 || kind != 3 || !bytes.Equal(stored, replacement) {
@@ -109,12 +106,12 @@ func TestEncryptedProfileTableMigrationSyncRekeyAndDelete(t *testing.T) {
 	if status != 200 || result(out)["status"] != "ok" {
 		t.Fatalf("profile delete: %d %v", status, out)
 	}
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM vault_user_profiles WHERE vault_id=?", vid).Scan(&profiles); err != nil || profiles != 0 {
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM vault_items WHERE vault_id=?", vid).Scan(&profiles); err != nil || profiles != 0 {
 		t.Fatal("profile deletion failed")
 	}
 }
 
-// Mixed snapshots share pagination and quota across both physical tables.
+// Mixed snapshots share pagination and quota across all item kinds.
 func TestProfileMixedPaginationQuotaMaintenanceAndRollback(t *testing.T) {
 	s, m := testServer(t)
 	token, _ := login(t, s, m, "profile-mixed-"+randomHex(6)+"@example.com")
@@ -167,7 +164,7 @@ func TestProfileMixedPaginationQuotaMaintenanceAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.DB.QueryRow("SELECT item_count FROM vaults WHERE vault_id=?", vid).Scan(&count); err != nil || count != 3 {
-		t.Fatalf("maintenance omitted profiles: %d, %v", count, err)
+		t.Fatalf("maintenance omitted item kinds: %d, %v", count, err)
 	}
 	s.Config.Limits["ITEMS_PER_VAULT_LIMIT"] = 3
 	if code, out = call(t, h, "POST", base+"/items", token, map[string]any{"items": []any{incoming(newID, 3, 0, "over-quota-profile")}}); code != 413 || out["error"] != "quota_exceeded" {

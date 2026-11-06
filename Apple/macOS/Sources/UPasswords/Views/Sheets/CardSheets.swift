@@ -414,12 +414,14 @@ struct SetLabelsSheet: View {
 
 // MARK: - Symbol picker
 
-/// 选择卡片的 SF Symbols 图标词条。
+/// 选择卡片的 SF Symbols 图标词条（列表右键入口,结果直接写回目标卡片）。
 struct SelectSymbolSheet: View {
     @EnvironmentObject var ctx: AppContext
     @Environment(\.dismiss) var dismiss
+    let cardId: UUID
     @State private var group: String = "internet_group"
     @State private var query = ""
+    @State private var selectedSymbol: String?
 
     var body: some View {
         SheetShell(
@@ -427,6 +429,13 @@ struct SelectSymbolSheet: View {
             minWidth: 520,
             okTitle: L10n.t("close_button"),
             search: $query,
+            onAppearBody: {
+                selectedSymbol = ctx.database.card(id: cardId)?.symbol
+                if let name = selectedSymbol,
+                   let g = SymbolModel.shared.group(ofSymbol: name) {
+                    group = g
+                }
+            },
             onCancel: { dismiss() },
             onOk: { dismiss() },
             content: {
@@ -445,7 +454,8 @@ struct SelectSymbolSheet: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 72))], spacing: 10) {
                             ForEach(items, id: \.self) { name in
                                 Button {
-                                    ctx.editDraft?.card.symbol = name
+                                    ctx.setCardSymbol(id: cardId, symbol: name)
+                                    selectedSymbol = name
                                     dismiss()
                                 } label: {
                                     VStack(spacing: 4) {
@@ -456,7 +466,7 @@ struct SelectSymbolSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(8)
                                     .background(
-                                        ctx.editDraft?.card.symbol == name
+                                        selectedSymbol == name
                                             ? Color.accentColor.opacity(0.2)
                                             : Color(nsColor: .controlBackgroundColor),
                                         in: RoundedRectangle(cornerRadius: 8)
@@ -478,10 +488,12 @@ struct SelectSymbolSheet: View {
 /// 颜色选择器(含「使用网站图标」开关)。两种呈现方式:
 /// - 编辑表单内本地呈现(传 onApply):结果回调给调用方,随编辑表单一起关闭,
 ///   不会出现跨表单残留/错写其他卡片的孤儿弹层;
-/// - 经 ctx.activeSheet 呈现(列表右键等):结果写入 ctx.editDraft。
+/// - 经 ctx.activeSheet 呈现(列表右键,传 cardId):结果直接写回目标卡片。
 struct SelectColorSheet: View {
     @EnvironmentObject var ctx: AppContext
     @Environment(\.dismiss) var dismiss
+    /// 直接写卡模式(列表右键)的目标卡片;编辑表单本地呈现时保持 nil。
+    var cardId: UUID? = nil
     var initialColor: String? = nil
     var initialUseWebsiteIcon: Bool = false
     var onApply: ((_ color: String, _ useWebsiteIcon: Bool) -> Void)? = nil
@@ -496,20 +508,19 @@ struct SelectColorSheet: View {
                 if onApply != nil {
                     selection = initialColor ?? "gray"
                     useWebsiteIcon = initialUseWebsiteIcon
-                } else {
-                    selection = ctx.editDraft?.card.color ?? "gray"
-                    useWebsiteIcon = ctx.editDraft?.card.useWebsiteIcon ?? false
+                } else if let cardId, let card = ctx.database.card(id: cardId) {
+                    selection = card.color ?? "gray"
+                    useWebsiteIcon = card.useWebsiteIcon
                 }
             },
             onCancel: { dismiss() },
             onOk: {
-                if onApply != nil {
+                if let onApply {
                     Log.info("ui", "color applied color=\(selection) websiteIcon=\(useWebsiteIcon)")
-                    onApply?(selection, useWebsiteIcon)
-                } else {
-                    Log.info("ui", "color applied to editDraft color=\(selection) websiteIcon=\(useWebsiteIcon)")
-                    ctx.editDraft?.card.color = selection
-                    ctx.editDraft?.card.useWebsiteIcon = useWebsiteIcon
+                    onApply(selection, useWebsiteIcon)
+                } else if let cardId {
+                    Log.info("ui", "color applied to card cardId=\(cardId) color=\(selection) websiteIcon=\(useWebsiteIcon)")
+                    ctx.setCardAppearance(id: cardId, color: selection, useWebsiteIcon: useWebsiteIcon)
                 }
                 dismiss()
             },

@@ -66,11 +66,19 @@ struct ExportAsSheet: View {
         panel.allowedContentTypes = format == .xml ? [.xml] : [.plainText]
         panel.nameFieldStringValue = "\(ctx.databaseName).\(format.rawValue)"
         if panel.runModal() == .OK, let url = panel.url {
-            try? text.data(using: .utf8)?.write(to: url)
-            AppToast.shared.show(L10n.t("data_exported_message") + " " + url.path)
+            do {
+                try Data(text.utf8).write(to: url)
+                AppToast.shared.show(L10n.t("data_exported_message") + " " + url.path)
+                exportPassword = ""
+                dismiss()
+            } catch {
+                Log.error("app", "export write failed: \(error)")
+                AppToast.shared.show(error.localizedDescription)
+            }
+        } else {
+            exportPassword = ""
+            dismiss()
         }
-        exportPassword = ""
-        dismiss()
     }
 }
 

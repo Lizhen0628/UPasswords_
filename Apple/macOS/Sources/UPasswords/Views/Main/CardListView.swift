@@ -10,6 +10,10 @@ struct CardListView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject private var searchResults: AppContext.SearchState.Results
 
+    /// 最近一次非空选中项:删除动作会先把 selectedCardId 置 nil,
+    /// 补选相邻项时需用它还原「被移除的是谁」。
+    @State private var lastSelectedID: UUID?
+
     var body: some View {
         let visibleCards = cards
         return list(visibleCards)
@@ -46,16 +50,41 @@ struct CardListView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .focusable()
+        .onKeyPress(.delete) {
+            guard let id = ctx.selectedCardId else { return .ignored }
+            ctx.deleteCard(id)
+            return .handled
+        }
         .onAppear {
             // 进入主界面后始终有选中项
             if ctx.selectedCardId == nil { ctx.selectedCardId = cards.first?.id }
         }
         .onChange(of: ctx.selectedCardId) { _, id in
             if let id {
+                lastSelectedID = id
                 ctx.pushRecent(id)
                 ctx.touch()
             }
         }
+        .onChange(of: cards.map(\.id)) { oldIDs, newIDs in
+            reselectNeighbor(oldIDs: oldIDs, newIDs: newIDs)
+        }
+    }
+
+    /// 选中项离开可见列表(删除/切分类/搜索过滤)后补选相邻项:
+    /// 详情面板不再悬空展示不在当前列表中的卡片,连续 Delete 也不中断。
+    private func reselectNeighbor(oldIDs: [UUID], newIDs: [UUID]) {
+        let removed = ctx.selectedCardId ?? lastSelectedID
+        guard let removed, !newIDs.contains(removed) else { return }
+        let neighbor: UUID?
+        if let index = oldIDs.firstIndex(of: removed) {
+            neighbor = index < newIDs.count ? newIDs[index] : newIDs.last
+        } else {
+            neighbor = newIDs.first
+        }
+        ctx.selectedCardId = neighbor
+        Log.info("ui", "list reselect after removal old=\(removed) new=\(neighbor.map { "\($0)" } ?? "nil") visible=\(newIDs.count)")
     }
 
     /// 列表右键菜单。
@@ -65,12 +94,11 @@ struct CardListView: View {
         Button(L10n.t("add_note_command")) { ctx.activeSheet = .addNote }
         Button(L10n.t("add_template_command")) { ctx.activeSheet = .addCard }
         Divider()
-        // 回收站内的「删除」必须是彻底删除——对已入回收站的项再执行 trashCard
-        // 是无效操作(表现为"删不掉");列表与详情页语义保持一致
-        if card.trashed {
-            Button(L10n.t("ios_purge_button"), role: .destructive) { ctx.deleteCardPermanently(card.id) }
-        } else {
-            Button(L10n.t("delete_command")) { ctx.trashCard(card.id) }
+        Button(
+            L10n.t(card.trashed ? "ios_purge_button" : "delete_command"),
+            role: .destructive
+        ) {
+            ctx.deleteCard(card.id)
         }
         Button(L10n.t("move_command")) { ctx.activeSheet = .labels(cardId: card.id) }
         Button(L10n.t("duplicate_command")) { ctx.duplicateCard(card.id) }
@@ -97,8 +125,8 @@ struct CardListView: View {
         Button(L10n.t("use_website_icon_command")) {
             ctx.toggleUseWebsiteIcon(cardId: card.id)
         }
-        Button(L10n.t("select_symbol_command")) { ctx.activeSheet = .selectSymbol }
-        Button(L10n.t("select_color_command")) { ctx.activeSheet = .selectColor }
+        Button(L10n.t("select_symbol_command")) { ctx.activeSheet = .selectSymbol(cardId: card.id) }
+        Button(L10n.t("select_color_command")) { ctx.activeSheet = .selectColor(cardId: card.id) }
     }
 
     private var emptyState: some View {

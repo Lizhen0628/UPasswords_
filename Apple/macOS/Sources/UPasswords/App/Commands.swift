@@ -106,20 +106,14 @@ struct UPasswordsCommands: Commands {
             Button(L10n.t("help_command")) { perform { AppContext.shared.activeSheet = .whatsNew } }
         }
 
-        // 为卡片列表注册 Delete 键的上下文行为。
         CommandGroup(after: .pasteboard) {
             Button(L10n.t("delete_card_query")) {
                 perform {
                     let ctx = AppContext.shared
                     guard let id = ctx.selectedCardId else { return }
-                    if ctx.selection == .special(.trash) {
-                        ctx.deleteCardPermanently(id)
-                    } else {
-                        ctx.trashCard(id)
-                    }
+                    ctx.deleteCard(id)
                 }
             }
-            .keyboardShortcut(.delete, modifiers: [])
 
             Button(L10n.t("duplicate_command")) {
                 perform {

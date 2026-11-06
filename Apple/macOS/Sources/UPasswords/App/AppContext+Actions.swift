@@ -122,6 +122,20 @@ extension AppContext {
         saveDebounced()
     }
 
+    /// 按卡片当前状态执行删除：普通卡片移入回收站，回收站卡片永久删除。
+    /// - Parameter id: 卡片 UUID。
+    func deleteCard(_ id: UUID) {
+        guard let card = database.card(id: id) else {
+            Log.warn("ui", "deleteCard id=\(id) skipped: card not found")
+            return
+        }
+        if card.trashed {
+            deleteCardPermanently(id)
+        } else {
+            trashCard(id)
+        }
+    }
+
     /// 从本地值集合永久移除卡片，并安排保存供同步差分收集删除。
     ///
     /// - Parameter id: 被删除卡片的稳定身份。
@@ -199,6 +213,39 @@ extension AppContext {
         Log.info("ui", "setCardAutofill id=\(id) on=\(on)")
         database.cards[i].autofillEnabled = on
         saveDebounced()
+    }
+
+    /// 设置卡片符号（列表右键「选择符号」）。
+    ///
+    /// - Parameters:
+    ///   - id: 卡片 UUID。
+    ///   - symbol: 符号词条。
+    func setCardSymbol(id: UUID, symbol: String) {
+        guard let i = database.cards.firstIndex(where: { $0.id == id }) else {
+            Log.warn("ui", "setCardSymbol id=\(id) skipped: card not found")
+            return
+        }
+        Log.info("ui", "setCardSymbol id=\(id)")
+        database.cards[i].symbol = symbol
+        saveDebounced()
+    }
+
+    /// 设置卡片颜色与「使用网站图标」开关（列表右键「选择颜色」）。
+    ///
+    /// - Parameters:
+    ///   - id: 卡片 UUID。
+    ///   - color: 颜色词条。
+    ///   - useWebsiteIcon: 是否使用网站图标。
+    func setCardAppearance(id: UUID, color: String, useWebsiteIcon: Bool) {
+        guard let i = database.cards.firstIndex(where: { $0.id == id }) else {
+            Log.warn("ui", "setCardAppearance id=\(id) skipped: card not found")
+            return
+        }
+        Log.info("ui", "setCardAppearance id=\(id) color=\(color) websiteIcon=\(useWebsiteIcon)")
+        database.cards[i].color = color
+        database.cards[i].useWebsiteIcon = useWebsiteIcon
+        saveDebounced()
+        if useWebsiteIcon { fetchWebsiteIconNow(cardId: id) }
     }
 
     /// 复制完整卡片，分配新 UUID 与时间，取消收藏并安排保存。

@@ -177,7 +177,7 @@ struct ToolbarButtonSpec {
     static let delete = ToolbarButtonSpec(
         labelKey: "delete_button", helpKey: "delete_command", symbol: { "trash" },
         isActive: { _ in false }, isEnabled: { $0.selectedCardId != nil },
-        action: { if let id = $0.selectedCardId { $0.trashCard(id) } })
+        action: { if let id = $0.selectedCardId { $0.deleteCard(id) } })
     static let lock = ToolbarButtonSpec(
         labelKey: "lock_button", helpKey: "lock_command", symbol: { "lock.fill" },
         isActive: { _ in false }, isEnabled: { _ in true },

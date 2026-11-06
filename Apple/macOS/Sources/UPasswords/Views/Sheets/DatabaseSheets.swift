@@ -154,6 +154,7 @@ struct ManageDatabasesSheet: View {
     @Environment(\.dismiss) var dismiss
     @State private var newName = ""
     @State private var error = ""
+    @State private var pendingDeletion: AppContext.DatabaseSummary?
 
     var body: some View {
         SheetShell(
@@ -200,13 +201,9 @@ struct ManageDatabasesSheet: View {
                                 }
                                 Divider()
                                 Button(L10n.t("delete_button"), role: .destructive) {
-                                    do {
-                                        try ctx.deleteManagedDatabase(name: db.name)
-                                        ctx.objectWillChange.send()
-                                    } catch {
-                                        self.error = error.localizedDescription
-                                    }
+                                    pendingDeletion = db
                                 }
+                                .disabled(db.name == ctx.databaseName)
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
@@ -236,6 +233,30 @@ struct ManageDatabasesSheet: View {
                 }
             }
         )
+        .confirmationDialog(
+            L10n.t("delete_button"),
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L10n.t("delete_button"), role: .destructive) {
+                guard let db = pendingDeletion else { return }
+                do {
+                    try ctx.deleteManagedDatabase(name: db.name)
+                    ctx.objectWillChange.send()
+                } catch {
+                    self.error = error.localizedDescription
+                }
+                pendingDeletion = nil
+            }
+            Button(L10n.t("cancel_button"), role: .cancel) {}
+        } message: {
+            if let pendingDeletion {
+                Text(pendingDeletion.name)
+            }
+        }
     }
 
     @MainActor private func create() {

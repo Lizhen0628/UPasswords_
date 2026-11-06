@@ -46,6 +46,13 @@ struct CardDetailView: View {
         .onChange(of: currentCard?.files) { _, files in
             mergeDownloadedAttachments(images: currentCard?.images, files: files)
         }
+        .onChange(of: currentCard) { _, newCard in
+            // 库内卡片被外部变更(列表收藏星/右键标签与图标/同步)时刷新展示;
+            // 有未保存编辑则保留用户草稿,不强行合并
+            guard !hasUnsavedChanges else { return }
+            editingCard = newCard
+            editingBaseline = newCard
+        }
         .sheet(item: $previewAttachment) { attachment in
             AttachmentImagePreview(attachment: attachment) {
                 saveAttachment(attachment)
@@ -56,7 +63,11 @@ struct CardDetailView: View {
             ctx.loadCachedAttachments(cardID: cardID)
             ctx.prioritizeAttachmentDownload(cardID: cardID)
         }
+        .onReceive(NotificationCenter.default.publisher(for: AppContext.willLockNotification)) { _ in
+            if hasUnsavedChanges { saveEdits(selectCard: false) }
+        }
         .onDisappear {
+            if hasUnsavedChanges { saveEdits(selectCard: false) }
             if let cardID = ctx.selectedCardId {
                 ctx.releaseCachedAttachments(cardID: cardID)
             }
@@ -193,6 +204,9 @@ struct CardDetailView: View {
         var saved = draft
         saved.images = draft.images.map { edited in latest.images.first { $0.id == edited.id } ?? edited }
         saved.files = draft.files.map { edited in latest.files.first { $0.id == edited.id } ?? edited }
+        // 收藏星始终由会话层即时写库(底栏/列表星标),保存编辑时以库内最新值为准,
+        // 防止列表端切换的收藏被旧草稿回写覆盖
+        saved.favorite = latest.favorite
         ctx.upsertCard(saved, selectAfterSave: selectCard)
         let persisted = ctx.database.card(id: saved.id) ?? saved
         editingCard = persisted

@@ -68,7 +68,7 @@ struct MainWindowView: View {
         .ignoresSafeArea(.all, edges: .top)   // 隐藏标题栏后仍有 ~8pt 残留安全区,条带需贴顶
         .background(WindowChromeConfigurator(mode: .main))
         .navigationTitle(ctx.databaseName.isEmpty ? L10n.tBranded("app_title") : ctx.databaseName)
-        // 编辑表单关闭时,自动收掉仍挂在根视图上的编辑类弹层(颜色/符号/模板),
+        // 编辑表单关闭时,自动收掉仍挂在根视图上的编辑类弹层(模板选择),
         // 防止孤儿弹层残留并把结果错写到下一个打开的编辑草稿
         .onChange(of: ctx.editDraft != nil) { wasOpen, isOpen in
             if wasOpen, !isOpen, let sheet = ctx.activeSheet, sheet.isEditSheetContext {

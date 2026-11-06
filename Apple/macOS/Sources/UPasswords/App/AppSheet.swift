@@ -12,8 +12,8 @@ enum AppSheet: Identifiable, Hashable {
     case sorting
     case generator
     case labels(cardId: UUID)
-    case selectSymbol
-    case selectColor        // 卡片颜色选择
+    case selectSymbol(cardId: UUID)
+    case selectColor(cardId: UUID) // 卡片颜色选择(列表右键,结果直接写卡)
     case selectTexture
     case selectTemplate     // template picker inside edit-card
     case passwordHistory    // password_history_command
@@ -46,8 +46,8 @@ enum AppSheet: Identifiable, Hashable {
         case .sorting: return "sorting"
         case .generator: return "generator"
         case .labels(let id): return "labels:\(id)"
-        case .selectSymbol: return "selectSymbol"
-        case .selectColor: return "selectColor"
+        case .selectSymbol(let id): return "selectSymbol:\(id)"
+        case .selectColor(let id): return "selectColor:\(id)"
         case .selectTexture: return "selectTexture"
         case .selectTemplate: return "selectTemplate"
         case .passwordHistory: return "passwordHistory"
@@ -74,10 +74,11 @@ enum AppSheet: Identifiable, Hashable {
     }
 
     /// 由编辑表单内打开、编辑表单关闭时应当一并关闭的弹层
-    /// (否则会残留成孤儿弹层,其 OK 还可能错写下一个打开的编辑草稿)
+    /// (否则会残留成孤儿弹层,其 OK 还可能错写下一个打开的编辑草稿)。
+    /// 颜色/符号选择已改为携带目标卡片直接写库,不再依赖编辑草稿。
     var isEditSheetContext: Bool {
         switch self {
-        case .selectColor, .selectSymbol, .selectTemplate:
+        case .selectTemplate:
             return true
         default:
             return false

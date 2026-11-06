@@ -652,10 +652,17 @@ final class AppContext: ObservableObject {
         }
     }
 
+    static let willLockNotification = Notification.Name("UPasswords.willLock")
+
     /// 进入锁定相位。
     func lock() {
         guard phase == .unlocked else { return }
         Log.info("lifecycle", "lock \"\(databaseName)\"")
+        // 同步通知详情页先写回草稿；随后立即落盘，避免延迟保存被锁定相位拒绝。
+        NotificationCenter.default.post(name: Self.willLockNotification, object: nil)
+        saveDebounce?.cancel()
+        saveDebounce = nil
+        _ = save()
         password = ""
         vaultKey = nil
         phase = .locked
